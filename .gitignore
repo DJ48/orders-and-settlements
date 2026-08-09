@@ -1,8 +1,11 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+#
+# Patterns are deliberately unanchored. This is a monorepo, so a leading slash would
+# only match the repo root and miss api/node_modules, web/.next, api/dist, and so on.
 
 # dependencies
-/node_modules
-/.pnp
+node_modules/
+.pnp
 .pnp.*
 .yarn/*
 !.yarn/patches
@@ -11,14 +14,13 @@
 !.yarn/versions
 
 # testing
-/coverage
+coverage/
 
-# next.js
-/.next/
-/out/
-
-# production
-/build
+# build output
+.next/
+out/
+build/
+dist/
 
 # misc
 .DS_Store
@@ -30,8 +32,9 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files (can opt-in for committing if needed)
+# env files — real values are never committed
 .env*
+# ...but the template must be, so setup stays reproducible
 !.env.example
 
 # vercel
@@ -40,3 +43,9 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# local tooling state, not project config
+.claude/settings.local.json
+
+# internal working notes — the deliverables are README.md and docs/adr/
+PLAN.md
