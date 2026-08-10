@@ -9,11 +9,15 @@ import type {
 } from './types';
 
 /**
- * The API and the frontend are separately deployed (api/ on Render, web/ on Vercel), so every
- * call crosses an origin. `credentials: 'include'` is required on each request or the session
- * cookie never leaves the browser — see api/src/app.ts for the matching CORS config.
+ * The API and the frontend are separately deployed (api/ on Render, web/ on Vercel), but the
+ * browser only ever talks to THIS origin — next.config.ts proxies /api/* to the Express API
+ * server-side. That's deliberate: a genuinely cross-origin cookie is a third-party cookie, and
+ * Safari/Brave block those by default (Chrome/Edge do too in private mode). Routing through a
+ * same-origin proxy makes the session cookie an ordinary first-party cookie instead.
+ *
+ * `credentials: 'include'` is still needed — same-origin doesn't imply cookies are sent by
+ * default on every fetch, only that the browser is willing to store and send them at all here.
  */
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
 
 export class ApiError extends Error {
   constructor(
@@ -29,7 +33,7 @@ export class ApiError extends Error {
 }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const res = await fetch(`${API_URL}/api/v1${path}`, {
+  const res = await fetch(`/api/v1${path}`, {
     ...options,
     credentials: 'include',
     headers: { 'Content-Type': 'application/json', ...options.headers },
