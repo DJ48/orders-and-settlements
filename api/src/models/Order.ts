@@ -1,4 +1,11 @@
-import { Schema, model, models, type InferSchemaType, type Model } from 'mongoose';
+import {
+  Schema,
+  model,
+  models,
+  type InferSchemaType,
+  type Model,
+  type HydratedDocument,
+} from 'mongoose';
 import { MAX_LINE_ITEMS } from '../utils/totals';
 
 const wholeNumber = {
@@ -119,9 +126,15 @@ OrderSchema.index(
   { unique: true, partialFilterExpression: { 'payments.idempotencyKey': { $exists: true } } },
 );
 
+/** The schema's declared fields only — no `_id` on the order or on its subdocuments. See the
+ *  identical note on User.ts for why `InferSchemaType` never adds one. */
 export type OrderDoc = InferSchemaType<typeof OrderSchema>;
 export type LineItemDoc = InferSchemaType<typeof LineItemSchema>;
 export type PaymentDoc = InferSchemaType<typeof PaymentSchema>;
+
+/** An actual document instance — has `_id`, `save()`, etc. Use this, not `OrderDoc`, for
+ *  anything that came out of `Order.create()` / `Order.findOne()` / similar. */
+export type OrderDocument = HydratedDocument<OrderDoc>;
 
 export const Order: Model<OrderDoc> =
   (models.Order as Model<OrderDoc>) ?? model<OrderDoc>('Order', OrderSchema);
