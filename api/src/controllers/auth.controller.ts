@@ -50,16 +50,20 @@ function toUserResponse(user: { _id: { toString(): string }; email: string; name
 }
 
 /**
- * `SameSite=None` requires `Secure`, and browsers reject a `Secure` cookie over plain HTTP — so
- * these are environment-aware rather than hardcoded to the production values from PLAN.md §5.
- * In dev, web (:3000) and api (:4000) are different ports but the same site (both "localhost"),
- * so `Lax` over plain HTTP works; in production they're genuinely different sites (Vercel vs
- * Render), which is what actually requires `None; Secure`.
+ * `SameSite=Lax` unconditionally now — the browser only ever talks to web's own origin, which
+ * proxies /api/* to this service server-side (see web/next.config.ts). That makes the session
+ * cookie an ordinary first-party cookie regardless of environment, rather than a cross-site one
+ * that needs `None; Secure` and is subject to third-party-cookie blocking (Safari/Brave block
+ * that by default; it's exactly what caused login to "succeed" while the very next
+ * cookie-reading request came back unauthenticated).
+ *
+ * `secure` stays environment-aware: browsers reject a `Secure` cookie sent over plain HTTP,
+ * and local dev runs over HTTP while production is always HTTPS.
  */
 const SESSION_COOKIE_OPTIONS: CookieOptions = {
   httpOnly: true,
   secure: isProduction,
-  sameSite: isProduction ? 'none' : 'lax',
+  sameSite: 'lax',
   path: '/',
   maxAge: authService.SESSION_ABSOLUTE_MS,
 };
