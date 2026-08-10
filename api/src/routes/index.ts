@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import healthRoutes from './health.routes';
+import authRoutes from './auth.routes';
 
 /**
  * Every route in the API, mounted by `app.ts` under /api/v1.
@@ -10,7 +11,7 @@ import healthRoutes from './health.routes';
 const router = Router();
 
 router.use(healthRoutes);
-// router.use('/auth', authRoutes);
+router.use('/auth', authRoutes);
 // router.use('/orders', ordersRoutes);
 
 export default router;

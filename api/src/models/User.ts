@@ -1,4 +1,11 @@
-import { Schema, model, models, type InferSchemaType, type Model } from 'mongoose';
+import {
+  Schema,
+  model,
+  models,
+  type InferSchemaType,
+  type Model,
+  type HydratedDocument,
+} from 'mongoose';
 
 const UserSchema = new Schema(
   {
@@ -20,7 +27,13 @@ const UserSchema = new Schema(
   { timestamps: true },
 );
 
+/** The schema's declared fields only — no `_id`. `InferSchemaType` is also used for
+ *  subdocuments, which shouldn't carry one, so it never adds it for any schema. */
 export type UserDoc = InferSchemaType<typeof UserSchema>;
+
+/** An actual document instance — has `_id`, `save()`, etc. Use this, not `UserDoc`, for
+ *  anything that came out of `User.create()` / `User.findOne()` / similar. */
+export type UserDocument = HydratedDocument<UserDoc>;
 
 export const User: Model<UserDoc> =
   (models.User as Model<UserDoc>) ?? model<UserDoc>('User', UserSchema);
