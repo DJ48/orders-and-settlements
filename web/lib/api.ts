@@ -1,0 +1,79 @@
+import type {
+  Order,
+  OrderSummary,
+  OrderStatus,
+  CreateOrderInput,
+  RecordPaymentInput,
+  User,
+  ApiErrorBody,
+} from './types';
+
+/**
+ * The API and the frontend are separately deployed (api/ on Render, web/ on Vercel), so every
+ * call crosses an origin. `credentials: 'include'` is required on each request or the session
+ * cookie never leaves the browser — see api/src/app.ts for the matching CORS config.
+ */
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
+
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    public readonly code: string,
+    public readonly status: number,
+    public readonly field?: string,
+    public readonly details?: ApiErrorBody['error']['details'],
+  ) {
+    super(message);
+    this.name = 'ApiError';
+  }
+}
+
+async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const res = await fetch(`${API_URL}/api/v1${path}`, {
+    ...options,
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json', ...options.headers },
+  });
+
+  if (!res.ok) {
+    // The backend isn't guaranteed to return the JSON envelope for every failure mode
+    // (a proxy 502, for instance), so this must not throw on a non-JSON body.
+    const body: ApiErrorBody | null = await res.json().catch(() => null);
+    throw new ApiError(
+      body?.error.message ?? res.statusText,
+      body?.error.code ?? 'UNKNOWN_ERROR',
+      res.status,
+      body?.error.field,
+      body?.error.details,
+    );
+  }
+
+  if (res.status === 204) return undefined as T;
+  return res.json();
+}
+
+export const api = {
+  signup: (email: string, password: string, name?: string) =>
+    request<User>('/auth/signup', { method: 'POST', body: JSON.stringify({ email, password, name }) }),
+
+  login: (email: string, password: string) =>
+    request<User>('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) }),
+
+  logout: () => request<void>('/auth/logout', { method: 'POST' }),
+
+  me: () => request<User>('/auth/me'),
+
+  listOrders: (status?: OrderStatus) =>
+    request<OrderSummary[]>(`/orders${status ? `?status=${status}` : ''}`),
+
+  getOrder: (id: string) => request<Order>(`/orders/${id}`),
+
+  createOrder: (input: CreateOrderInput) =>
+    request<Order>('/orders', { method: 'POST', body: JSON.stringify(input) }),
+
+  recordPayment: (orderId: string, input: RecordPaymentInput) =>
+    request<Order>(`/orders/${orderId}/payments`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
+};
