@@ -1,4 +1,11 @@
-import { Schema, model, models, type InferSchemaType, type Model } from 'mongoose';
+import {
+  Schema,
+  model,
+  models,
+  type InferSchemaType,
+  type Model,
+  type HydratedDocument,
+} from 'mongoose';
 
 /**
  * One login = one session.
@@ -40,6 +47,11 @@ SessionSchema.index({ userId: 1 });
 SessionSchema.index({ absoluteExpiresAt: 1 }, { expireAfterSeconds: 0 });
 
 export type SessionDoc = InferSchemaType<typeof SessionSchema>;
+
+/** `_id` here is already the token hash (declared explicitly in the schema, since `{ _id:
+ *  false }` disables Mongoose's auto-ObjectId), but `HydratedDocument` is still needed for
+ *  document methods and consistency with how the other models are typed. */
+export type SessionDocument = HydratedDocument<SessionDoc>;
 
 export const Session: Model<SessionDoc> =
   (models.Session as Model<SessionDoc>) ?? model<SessionDoc>('Session', SessionSchema);
