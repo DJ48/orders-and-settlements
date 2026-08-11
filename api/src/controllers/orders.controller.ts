@@ -2,8 +2,8 @@ import type { Request, Response } from 'express';
 import { z, ZodError } from 'zod';
 import * as ordersService from '../services/orders.service';
 import { ValidationError } from '../utils/errors';
-import { deriveStatus, amountDueCents, isPaidLate, ORDER_STATUSES } from '../utils/status';
-import type { OrderDocument } from '../models/Order';
+import { ORDER_STATUSES } from '../utils/status';
+import { toOrderResponse, toOrderSummaryResponse } from './orderResponse';
 
 /**
  * Controllers stay thin: validate with zod, call a service, shape the response. The derived
@@ -42,75 +42,6 @@ function parse<T>(schema: z.ZodType<T>, input: unknown): T {
 
 function requestContext(req: Request): ordersService.RequestContext {
   return { ip: req.ip, userAgent: req.get('user-agent'), requestId: req.requestId };
-}
-
-interface DerivableOrderFields {
-  amountPaidCents: number;
-  totalCents: number;
-  dueDate: Date;
-  lastPaymentOn?: Date | null;
-}
-
-/** The money axis and time axis are combined here into the one status the API contract promises. */
-function derivedFields(order: DerivableOrderFields) {
-  return {
-    status: deriveStatus({
-      amountPaidCents: order.amountPaidCents,
-      totalCents: order.totalCents,
-      dueDate: order.dueDate,
-    }),
-    amountDueCents: amountDueCents(order.amountPaidCents, order.totalCents),
-    paidLate: isPaidLate(order.lastPaymentOn, order.dueDate, order.amountPaidCents, order.totalCents),
-    // Lives on the scalar, not the payments array — amountPaidCents and payments.length can
-    // never disagree, since both change together in the same atomic write.
-    canEditLineItems: order.amountPaidCents === 0,
-  };
-}
-
-interface OrderSummaryLean {
-  _id: unknown;
-  customer: string;
-  dueDate: Date;
-  subtotalCents: number;
-  totalCents: number;
-  amountPaidCents: number;
-  lastPaymentOn?: Date | null;
-  createdAt: Date;
-  updatedAt: Date;
-}
-
-function toOrderSummaryResponse(order: OrderSummaryLean) {
-  return {
-    _id: String(order._id),
-    customer: order.customer,
-    dueDate: order.dueDate.toISOString(),
-    subtotalCents: order.subtotalCents,
-    totalCents: order.totalCents,
-    amountPaidCents: order.amountPaidCents,
-    createdAt: order.createdAt.toISOString(),
-    updatedAt: order.updatedAt.toISOString(),
-    ...derivedFields(order),
-  };
-}
-
-function toOrderResponse(order: OrderDocument) {
-  return {
-    ...toOrderSummaryResponse(order),
-    lineItems: order.lineItems.map((line) => ({
-      _id: String(line._id),
-      description: line.description,
-      quantity: line.quantity,
-      unitPriceCents: line.unitPriceCents,
-      lineTotalCents: line.lineTotalCents,
-    })),
-    payments: order.payments.map((payment) => ({
-      _id: String(payment._id),
-      amountCents: payment.amountCents,
-      paidOn: payment.paidOn.toISOString(),
-      note: payment.note ?? undefined,
-      createdAt: payment.createdAt.toISOString(),
-    })),
-  };
 }
 
 export async function getOrders(req: Request, res: Response): Promise<void> {
