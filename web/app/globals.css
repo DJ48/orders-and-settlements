@@ -2,25 +2,70 @@
 
 :root {
   --background: #ffffff;
-  --foreground: #171717;
+  --foreground: #0f1115;
+  --surface: #f7f8fa;
+  --surface-hover: #eef0f3;
+  --border-subtle: #e5e7eb;
+
+  /* A deliberate, single accent — indigo reads as "financial software" without being
+     generic corporate blue, and stays distinct from the pure black/white content. */
+  --accent: #4f46e5;
+  --accent-hover: #4338ca;
+  --accent-foreground: #ffffff;
+  --accent-soft: #eef2ff;
+
+  --success: #059669;
+  --success-soft: #ecfdf5;
+  --warning: #d97706;
+  --warning-soft: #fffbeb;
+  --danger: #dc2626;
+  --danger-soft: #fef2f2;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-surface: var(--surface);
+  --color-surface-hover: var(--surface-hover);
+  --color-border-subtle: var(--border-subtle);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent-soft: var(--accent-soft);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --background: #0a0b0d;
+    --foreground: #f2f3f5;
+    --surface: #16181c;
+    --surface-hover: #1e2126;
+    --border-subtle: #26292f;
+
+    --accent: #818cf8;
+    --accent-hover: #a5b0f9;
+    --accent-foreground: #0a0b0d;
+    --accent-soft: #1e1f3a;
+
+    --success: #34d399;
+    --success-soft: #062e20;
+    --warning: #fbbf24;
+    --warning-soft: #2e2205;
+    --danger: #f87171;
+    --danger-soft: #350a0a;
   }
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans), Arial, Helvetica, sans-serif;
 }

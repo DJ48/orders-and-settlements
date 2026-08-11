@@ -35,7 +35,7 @@ export default function LoginPage() {
         <h1 className="text-2xl font-semibold tracking-tight">Sign in</h1>
         <p className="text-sm text-black/60 dark:text-white/60">
           Don&apos;t have an account?{' '}
-          <Link href="/signup" className="underline underline-offset-4">
+          <Link href="/signup" className="text-accent underline underline-offset-4">
             Create one
           </Link>
         </p>
@@ -53,7 +53,7 @@ export default function LoginPage() {
             autoComplete="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            className="w-full rounded-md border border-black/15 bg-transparent px-3 py-2 text-sm outline-none focus:border-foreground dark:border-white/20"
+            className="w-full rounded-lg border border-black/15 bg-transparent px-3 py-2 text-sm outline-none transition-colors focus:border-accent dark:border-white/20"
           />
         </div>
 
@@ -68,12 +68,12 @@ export default function LoginPage() {
             autoComplete="current-password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className="w-full rounded-md border border-black/15 bg-transparent px-3 py-2 text-sm outline-none focus:border-foreground dark:border-white/20"
+            className="w-full rounded-lg border border-black/15 bg-transparent px-3 py-2 text-sm outline-none transition-colors focus:border-accent dark:border-white/20"
           />
         </div>
 
         {error && (
-          <p role="alert" className="text-sm text-red-600 dark:text-red-400">
+          <p role="alert" className="text-sm text-danger">
             {error}
           </p>
         )}
@@ -81,7 +81,7 @@ export default function LoginPage() {
         <button
           type="submit"
           disabled={submitting}
-          className="w-full rounded-md bg-foreground px-4 py-2 text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50"
+          className="w-full rounded-lg bg-accent px-4 py-2 text-sm font-medium text-accent-foreground shadow-sm transition-opacity hover:opacity-90 disabled:opacity-50"
         >
           {submitting ? 'Signing in…' : 'Sign in'}
         </button>

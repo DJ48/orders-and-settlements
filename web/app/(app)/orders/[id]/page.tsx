@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { api, ApiError } from '@/lib/api';
 import { formatCentsAsCurrency, parseDollarsToCents } from '@/lib/money';
 import { StatusBadge } from '@/components/StatusBadge';
-import { AppHeader } from '@/components/AppHeader';
+import { DatePicker } from '@/components/DatePicker';
 import type { Order } from '@/lib/types';
 
 function formatDate(iso: string) {
@@ -69,8 +69,8 @@ function PaymentModal({
   }
 
   return (
-    <div className="fixed inset-0 flex items-center justify-center bg-black/40 px-4">
-      <div className="w-full max-w-sm rounded-lg bg-background p-6 shadow-lg">
+    <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/50 px-4 backdrop-blur-sm">
+      <div className="w-full max-w-sm rounded-2xl border border-border-subtle bg-background p-6 shadow-2xl">
         <h2 className="mb-4 text-lg font-semibold">Record payment</h2>
 
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -85,41 +85,32 @@ function PaymentModal({
               required
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
-              className="w-full rounded-md border border-black/15 bg-transparent px-3 py-2 text-sm outline-none focus:border-foreground dark:border-white/20"
+              className="w-full rounded-lg border border-black/15 bg-transparent px-3 py-2 text-sm outline-none transition-colors focus:border-accent dark:border-white/20"
             />
-            <p className="text-xs text-black/50 dark:text-white/50">
-              {formatCentsAsCurrency(order.amountDueCents)} due
-            </p>
+            <p className="text-xs text-foreground/50">{formatCentsAsCurrency(order.amountDueCents)} due</p>
           </div>
 
           <div className="space-y-1">
             <label htmlFor="paidOn" className="text-sm font-medium">
               Date
             </label>
-            <input
-              id="paidOn"
-              type="date"
-              required
-              value={paidOn}
-              onChange={(e) => setPaidOn(e.target.value)}
-              className="w-full rounded-md border border-black/15 bg-transparent px-3 py-2 text-sm outline-none focus:border-foreground dark:border-white/20"
-            />
+            <DatePicker id="paidOn" required value={paidOn} onChange={setPaidOn} />
           </div>
 
           <div className="space-y-1">
             <label htmlFor="note" className="text-sm font-medium">
-              Note <span className="text-black/40 dark:text-white/40">(optional)</span>
+              Note <span className="text-foreground/40">(optional)</span>
             </label>
             <input
               id="note"
               value={note}
               onChange={(e) => setNote(e.target.value)}
-              className="w-full rounded-md border border-black/15 bg-transparent px-3 py-2 text-sm outline-none focus:border-foreground dark:border-white/20"
+              className="w-full rounded-lg border border-black/15 bg-transparent px-3 py-2 text-sm outline-none transition-colors focus:border-accent dark:border-white/20"
             />
           </div>
 
           {error && (
-            <p role="alert" className="text-sm text-red-600 dark:text-red-400">
+            <p role="alert" className="text-sm text-danger">
               {error}
             </p>
           )}
@@ -128,14 +119,14 @@ function PaymentModal({
             <button
               type="button"
               onClick={onClose}
-              className="flex-1 rounded-md border border-black/15 px-4 py-2 text-sm font-medium transition-colors hover:bg-black/5 dark:border-white/20 dark:hover:bg-white/10"
+              className="flex-1 rounded-lg border border-black/15 px-4 py-2 text-sm font-medium transition-colors hover:bg-surface-hover dark:border-white/20"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={submitting}
-              className="flex-1 rounded-md bg-foreground px-4 py-2 text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50"
+              className="flex-1 rounded-lg bg-accent px-4 py-2 text-sm font-medium text-accent-foreground shadow-sm transition-opacity hover:opacity-90 disabled:opacity-50"
             >
               {submitting ? 'Recording…' : 'Record payment'}
             </button>
@@ -195,68 +186,84 @@ export default function OrderDetailPage() {
 
   if (error) {
     return (
-      <main className="mx-auto max-w-3xl px-6 py-10">
-        <AppHeader />
-        <p role="alert" className="text-sm text-red-600 dark:text-red-400">
+      <div className="mx-auto max-w-4xl px-6 py-10 md:px-10">
+        <p role="alert" className="text-sm text-danger">
           {error}
         </p>
-        <Link href="/dashboard" className="mt-4 inline-block text-sm underline underline-offset-4">
+        <Link href="/dashboard" className="mt-4 inline-block text-sm font-medium text-accent underline underline-offset-4">
           Back to dashboard
         </Link>
-      </main>
+      </div>
     );
   }
 
   if (!order) {
     return (
-      <main className="mx-auto max-w-3xl px-6 py-10">
-        <AppHeader />
-        <p className="text-sm text-black/50 dark:text-white/50">Loading…</p>
-      </main>
+      <div className="mx-auto max-w-4xl px-6 py-10 md:px-10">
+        <div className="animate-pulse space-y-3">
+          <div className="h-8 w-64 rounded bg-surface" />
+          <div className="h-40 rounded-xl bg-surface" />
+        </div>
+      </div>
     );
   }
 
   return (
-    <main className="mx-auto max-w-3xl px-6 py-10">
-      <AppHeader />
-
-      <Link href="/dashboard" className="text-sm text-black/50 underline underline-offset-4 dark:text-white/50">
+    <div className="mx-auto max-w-4xl px-6 py-10 md:px-10">
+      <Link href="/dashboard" className="text-sm text-foreground/50 underline underline-offset-4 hover:text-foreground/70">
         ← Back to dashboard
       </Link>
 
-      <div className="mt-4 mb-2 flex items-start justify-between">
+      <div className="mt-4 mb-2 flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">{order.customer}</h1>
-          <p className="mt-1 text-sm text-black/60 dark:text-white/60">Due {formatDate(order.dueDate)}</p>
+          <p className="mt-1 text-sm text-foreground/60">Due {formatDate(order.dueDate)}</p>
         </div>
         <StatusBadge status={order.status} paidLate={order.paidLate} />
       </div>
 
       <div className="mb-8 flex items-center gap-4">
-        <Link href={`/orders/${order._id}/edit`} className="text-sm underline underline-offset-4">
+        <Link href={`/orders/${order._id}/edit`} className="text-sm font-medium text-accent underline underline-offset-4">
           Edit
         </Link>
         <button
           onClick={handleDelete}
           disabled={!order.canEditLineItems || deleting}
           title={!order.canEditLineItems ? 'Cannot delete an order with payments recorded against it' : undefined}
-          className="text-sm text-red-600 underline underline-offset-4 disabled:cursor-not-allowed disabled:text-black/30 disabled:no-underline dark:text-red-400 dark:disabled:text-white/30"
+          className="text-sm font-medium text-danger underline underline-offset-4 disabled:cursor-not-allowed disabled:text-foreground/30 disabled:no-underline"
         >
           {deleting ? 'Deleting…' : 'Delete'}
         </button>
       </div>
 
       {deleteError && (
-        <p role="alert" className="mb-6 text-sm text-red-600 dark:text-red-400">
+        <p role="alert" className="mb-6 text-sm text-danger">
           {deleteError}
         </p>
       )}
 
+      <div className="mb-8 grid grid-cols-3 gap-4">
+        <div className="rounded-xl border border-border-subtle bg-surface px-5 py-4">
+          <p className="text-xs font-medium uppercase tracking-wide text-foreground/50">Total</p>
+          <p className="mt-1.5 text-xl font-semibold tabular-nums">{formatCentsAsCurrency(order.totalCents)}</p>
+        </div>
+        <div className="rounded-xl border border-border-subtle bg-surface px-5 py-4">
+          <p className="text-xs font-medium uppercase tracking-wide text-foreground/50">Paid</p>
+          <p className="mt-1.5 text-xl font-semibold tabular-nums text-success">{formatCentsAsCurrency(order.amountPaidCents)}</p>
+        </div>
+        <div className="rounded-xl border border-border-subtle bg-surface px-5 py-4">
+          <p className="text-xs font-medium uppercase tracking-wide text-foreground/50">Due</p>
+          <p className={`mt-1.5 text-xl font-semibold tabular-nums ${order.amountDueCents > 0 ? 'text-accent' : ''}`}>
+            {formatCentsAsCurrency(order.amountDueCents)}
+          </p>
+        </div>
+      </div>
+
       <section className="mb-8">
-        <h2 className="mb-3 text-sm font-medium text-black/60 dark:text-white/60">Line items</h2>
-        <div className="overflow-hidden rounded-lg border border-black/10 dark:border-white/10">
+        <h2 className="mb-3 text-sm font-medium text-foreground/60">Line items</h2>
+        <div className="overflow-hidden rounded-xl border border-border-subtle">
           <table className="w-full text-sm">
-            <thead className="bg-black/5 text-left text-xs uppercase tracking-wide text-black/50 dark:bg-white/5 dark:text-white/50">
+            <thead className="bg-surface text-left text-xs uppercase tracking-wide text-foreground/50">
               <tr>
                 <th className="px-4 py-2 font-medium">Description</th>
                 <th className="px-4 py-2 font-medium">Qty</th>
@@ -264,7 +271,7 @@ export default function OrderDetailPage() {
                 <th className="px-4 py-2 text-right font-medium">Total</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-black/10 dark:divide-white/10">
+            <tbody className="divide-y divide-border-subtle">
               {order.lineItems.map((line) => (
                 <tr key={line._id}>
                   <td className="px-4 py-2">{line.description}</td>
@@ -276,46 +283,31 @@ export default function OrderDetailPage() {
             </tbody>
           </table>
         </div>
-
-        <div className="mt-3 flex justify-end gap-8 text-sm">
-          <div className="text-right">
-            <p className="text-black/50 dark:text-white/50">Total</p>
-            <p className="font-semibold tabular-nums">{formatCentsAsCurrency(order.totalCents)}</p>
-          </div>
-          <div className="text-right">
-            <p className="text-black/50 dark:text-white/50">Paid</p>
-            <p className="font-semibold tabular-nums">{formatCentsAsCurrency(order.amountPaidCents)}</p>
-          </div>
-          <div className="text-right">
-            <p className="text-black/50 dark:text-white/50">Due</p>
-            <p className="font-semibold tabular-nums">{formatCentsAsCurrency(order.amountDueCents)}</p>
-          </div>
-        </div>
       </section>
 
       <section>
         <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-sm font-medium text-black/60 dark:text-white/60">Payment history</h2>
+          <h2 className="text-sm font-medium text-foreground/60">Payment history</h2>
           <button
             onClick={() => setShowModal(true)}
             disabled={order.amountDueCents === 0}
-            className="rounded-md bg-foreground px-3 py-1.5 text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-40"
+            className="rounded-lg bg-accent px-3.5 py-1.5 text-sm font-medium text-accent-foreground shadow-sm transition-opacity hover:opacity-90 disabled:opacity-40"
           >
             Record payment
           </button>
         </div>
 
         {order.payments.length === 0 ? (
-          <p className="text-sm text-black/50 dark:text-white/50">No payments recorded yet.</p>
+          <p className="text-sm text-foreground/50">No payments recorded yet.</p>
         ) : (
-          <ul className="divide-y divide-black/10 rounded-lg border border-black/10 dark:divide-white/10 dark:border-white/10">
+          <ul className="divide-y divide-border-subtle rounded-xl border border-border-subtle">
             {order.payments.map((payment) => (
               <li key={payment._id} className="flex items-center justify-between px-4 py-3 text-sm">
                 <div>
                   <p className="font-medium">{formatDate(payment.paidOn)}</p>
-                  {payment.note && <p className="text-black/50 dark:text-white/50">{payment.note}</p>}
+                  {payment.note && <p className="text-foreground/50">{payment.note}</p>}
                 </div>
-                <span className="tabular-nums font-medium">{formatCentsAsCurrency(payment.amountCents)}</span>
+                <span className="tabular-nums font-medium text-success">{formatCentsAsCurrency(payment.amountCents)}</span>
               </li>
             ))}
           </ul>
@@ -334,6 +326,6 @@ export default function OrderDetailPage() {
           }}
         />
       )}
-    </main>
+    </div>
   );
 }

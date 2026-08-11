@@ -4,7 +4,6 @@ import { useCallback, useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { api, ApiError } from '@/lib/api';
-import { AppHeader } from '@/components/AppHeader';
 import { OrderForm, draftLinesFromLineItems, type OrderFormSubmitData } from '@/components/OrderForm';
 import type { Order } from '@/lib/types';
 
@@ -44,34 +43,28 @@ export default function EditOrderPage() {
 
   if (error) {
     return (
-      <main className="mx-auto max-w-2xl px-6 py-10">
-        <AppHeader />
-        <p role="alert" className="text-sm text-red-600 dark:text-red-400">
+      <div className="mx-auto max-w-2xl px-6 py-10 md:px-10">
+        <p role="alert" className="text-sm text-danger">
           {error}
         </p>
-        <Link href="/dashboard" className="mt-4 inline-block text-sm underline underline-offset-4">
+        <Link href="/dashboard" className="mt-4 inline-block text-sm font-medium text-accent underline underline-offset-4">
           Back to dashboard
         </Link>
-      </main>
+      </div>
     );
   }
 
   if (!order) {
     return (
-      <main className="mx-auto max-w-2xl px-6 py-10">
-        <AppHeader />
-        <p className="text-sm text-black/50 dark:text-white/50">Loading…</p>
-      </main>
+      <div className="mx-auto max-w-2xl px-6 py-10 md:px-10">
+        <p className="text-sm text-foreground/50">Loading…</p>
+      </div>
     );
   }
 
   return (
-    <main className="mx-auto max-w-2xl px-6 py-10">
-      <AppHeader />
-      <Link
-        href={`/orders/${id}`}
-        className="text-sm text-black/50 underline underline-offset-4 dark:text-white/50"
-      >
+    <div className="mx-auto max-w-2xl px-6 py-10 md:px-10">
+      <Link href={`/orders/${id}`} className="text-sm text-foreground/50 underline underline-offset-4 hover:text-foreground/70">
         ← Back to order
       </Link>
       <h1 className="mt-4 mb-6 text-2xl font-semibold tracking-tight">Edit order</h1>
@@ -84,6 +77,6 @@ export default function EditOrderPage() {
         submittingLabel="Saving…"
         onSubmit={handleSubmit}
       />
-    </main>
+    </div>
   );
 }

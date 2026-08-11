@@ -1,12 +1,11 @@
 'use client';
 
-import { Suspense, useCallback, useEffect, useState } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { api, ApiError } from '@/lib/api';
 import { formatCentsAsCurrency } from '@/lib/money';
 import { StatusBadge } from '@/components/StatusBadge';
-import { AppHeader } from '@/components/AppHeader';
 import type { OrderStatus, OrderSummary } from '@/lib/types';
 
 const FILTERS: { label: string; value: OrderStatus | 'all' }[] = [
@@ -21,10 +20,28 @@ function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
+function StatCard({ label, value, tone }: { label: string; value: string; tone?: 'danger' | 'accent' }) {
+  return (
+    <div className="rounded-xl border border-border-subtle bg-surface px-5 py-4">
+      <p className="text-xs font-medium uppercase tracking-wide text-foreground/50">{label}</p>
+      <p
+        className={`mt-1.5 text-2xl font-semibold tabular-nums ${
+          tone === 'danger' ? 'text-danger' : tone === 'accent' ? 'text-accent' : ''
+        }`}
+      >
+        {value}
+      </p>
+    </div>
+  );
+}
+
 /**
  * The filter lives in the URL rather than component state, so a filtered dashboard view is
  * shareable and survives a refresh — mirroring how the API itself is designed to be filtered
- * (?status=) rather than filtered client-side after fetching everything.
+ * (?status=) rather than filtered client-side after fetching everything. The stat cards are
+ * deliberately computed from that same filtered set, not a separate unfiltered fetch — so
+ * filtering to "Overdue" makes the summary above the table answer exactly the question being
+ * asked, rather than showing unrelated totals.
  */
 function DashboardContent() {
   const router = useRouter();
@@ -58,6 +75,16 @@ function DashboardContent() {
     load();
   }, [load]);
 
+  const stats = useMemo(() => {
+    if (!orders) return null;
+    return {
+      count: orders.length,
+      totalValue: orders.reduce((sum, o) => sum + o.totalCents, 0),
+      outstanding: orders.reduce((sum, o) => sum + o.amountDueCents, 0),
+      overdue: orders.filter((o) => o.status === 'overdue').length,
+    };
+  }, [orders]);
+
   function setFilter(value: OrderStatus | 'all') {
     const params = new URLSearchParams(searchParams);
     if (value === 'all') params.delete('status');
@@ -66,27 +93,30 @@ function DashboardContent() {
   }
 
   return (
-    <main className="mx-auto max-w-5xl px-6 py-10">
-      <AppHeader>
-        <Link
-          href="/orders/new"
-          className="rounded-md bg-foreground px-3 py-1.5 text-sm font-medium text-background transition-opacity hover:opacity-90"
-        >
-          New order
-        </Link>
-      </AppHeader>
+    <div className="mx-auto max-w-[1400px] px-6 py-10 md:px-10">
+      <h1 className="mb-1 text-2xl font-semibold tracking-tight">Orders</h1>
+      <p className="mb-8 text-sm text-foreground/50">
+        Every order you&apos;ve created, what&apos;s been paid, and what&apos;s still due.
+      </p>
 
-      <h1 className="mb-6 text-2xl font-semibold tracking-tight">Orders</h1>
+      {stats && stats.count > 0 && (
+        <div className="mb-8 grid grid-cols-2 gap-4 lg:grid-cols-4">
+          <StatCard label="Orders" value={String(stats.count)} />
+          <StatCard label="Total value" value={formatCentsAsCurrency(stats.totalValue)} />
+          <StatCard label="Outstanding" value={formatCentsAsCurrency(stats.outstanding)} tone="accent" />
+          <StatCard label="Overdue" value={String(stats.overdue)} tone={stats.overdue > 0 ? 'danger' : undefined} />
+        </div>
+      )}
 
       <div className="mb-6 flex flex-wrap gap-2">
         {FILTERS.map((f) => (
           <button
             key={f.value}
             onClick={() => setFilter(f.value)}
-            className={`rounded-full px-3 py-1 text-sm font-medium transition-colors ${
+            className={`rounded-full px-3.5 py-1.5 text-sm font-medium transition-colors ${
               activeFilter === f.value
-                ? 'bg-foreground text-background'
-                : 'bg-black/5 text-black/70 hover:bg-black/10 dark:bg-white/10 dark:text-white/70 dark:hover:bg-white/15'
+                ? 'bg-accent text-accent-foreground'
+                : 'bg-surface text-foreground/70 hover:bg-surface-hover'
             }`}
           >
             {f.label}
@@ -95,22 +125,26 @@ function DashboardContent() {
       </div>
 
       {error && (
-        <p role="alert" className="mb-4 text-sm text-red-600 dark:text-red-400">
+        <p role="alert" className="mb-4 text-sm text-danger">
           {error}
         </p>
       )}
 
       {orders === null && !error && (
-        <p className="text-sm text-black/50 dark:text-white/50">Loading…</p>
+        <div className="animate-pulse space-y-2">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="h-12 rounded-lg bg-surface" />
+          ))}
+        </div>
       )}
 
       {orders?.length === 0 && (
-        <div className="rounded-lg border border-dashed border-black/15 px-6 py-12 text-center dark:border-white/20">
-          <p className="text-sm text-black/60 dark:text-white/60">
+        <div className="rounded-xl border border-dashed border-border-subtle px-6 py-16 text-center">
+          <p className="text-sm text-foreground/60">
             {activeFilter === 'all' ? 'No orders yet.' : `No ${activeFilter.replace('_', ' ')} orders.`}
           </p>
           {activeFilter === 'all' && (
-            <Link href="/orders/new" className="mt-2 inline-block text-sm underline underline-offset-4">
+            <Link href="/orders/new" className="mt-2 inline-block text-sm font-medium text-accent underline underline-offset-4">
               Create your first order
             </Link>
           )}
@@ -118,9 +152,9 @@ function DashboardContent() {
       )}
 
       {orders && orders.length > 0 && (
-        <div className="overflow-x-auto rounded-lg border border-black/10 dark:border-white/10">
+        <div className="overflow-x-auto rounded-xl border border-border-subtle">
           <table className="w-full text-sm">
-            <thead className="bg-black/5 text-left text-xs uppercase tracking-wide text-black/50 dark:bg-white/5 dark:text-white/50">
+            <thead className="bg-surface text-left text-xs uppercase tracking-wide text-foreground/50">
               <tr>
                 <th className="px-4 py-3 font-medium">Customer</th>
                 <th className="px-4 py-3 font-medium">Status</th>
@@ -130,12 +164,12 @@ function DashboardContent() {
                 <th className="px-4 py-3 font-medium">Due date</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-black/10 dark:divide-white/10">
+            <tbody className="divide-y divide-border-subtle">
               {orders.map((order) => (
                 <tr
                   key={order._id}
                   onClick={() => router.push(`/orders/${order._id}`)}
-                  className="cursor-pointer transition-colors hover:bg-black/5 dark:hover:bg-white/5"
+                  className="cursor-pointer transition-colors hover:bg-surface"
                 >
                   <td className="px-4 py-3 font-medium">{order.customer}</td>
                   <td className="px-4 py-3">
@@ -151,13 +185,13 @@ function DashboardContent() {
           </table>
         </div>
       )}
-    </main>
+    </div>
   );
 }
 
 export default function DashboardPage() {
   return (
-    <Suspense fallback={<main className="mx-auto max-w-5xl px-6 py-10">Loading…</main>}>
+    <Suspense fallback={<div className="mx-auto max-w-[1400px] px-6 py-10 md:px-10">Loading…</div>}>
       <DashboardContent />
     </Suspense>
   );
