@@ -2,7 +2,7 @@ import mongoose, { type Types } from 'mongoose';
 import { Order, type OrderDocument } from '../models/Order';
 import { computeTotals, type LineItemInput } from '../utils/totals';
 import { MoneyError } from '../utils/money';
-import { utcDateOnly, statusFilter, type OrderStatus } from '../utils/status';
+import { utcDateOnly, statusFilter, deriveStatus, type OrderStatus } from '../utils/status';
 import { NotFoundError, ValidationError, OrderLockedError, ConflictError } from '../utils/errors';
 import { recordAudit, snapshotOf } from './audit.service';
 import type { RequestContext } from './auth.service';
@@ -120,9 +120,10 @@ export async function updateOrder(
   const order = await getOrder(userId, orderId);
   let changed = false;
 
+  // Line items lock the moment any money exists against this specific total — the lock lives
+  // on the scalar (amountPaidCents), not the array, so this never needs to load `payments` and
+  // can't disagree with it, since both change atomically together.
   if (patch.lineItems) {
-    // The lock lives on the scalar (amountPaidCents), not the array — this check never needs
-    // to load `payments`, and can't disagree with it, since both change atomically together.
     if (order.amountPaidCents > 0) {
       throw new OrderLockedError();
     }
@@ -132,6 +133,22 @@ export async function updateOrder(
     order.subtotalCents = totals.subtotalCents;
     order.totalCents = totals.totalCents;
     changed = true;
+  }
+
+  // Customer/dueDate get a narrower lock than line items: they only gate something that's
+  // already true and could be silently rewritten — a fully-paid order's `paidLate` flag, or an
+  // already-overdue order's overdue-ness, both derived from dueDate. A partially-paid order
+  // that's still on track has nothing at risk yet, so extending its terms stays allowed; an
+  // overdue order with zero payments recorded has no payment history to protect either.
+  if (patch.customer !== undefined || patch.dueDate !== undefined) {
+    const currentStatus = deriveStatus({
+      amountPaidCents: order.amountPaidCents,
+      totalCents: order.totalCents,
+      dueDate: order.dueDate,
+    });
+    if (order.amountPaidCents > 0 && (currentStatus === 'paid' || currentStatus === 'overdue')) {
+      throw new OrderLockedError();
+    }
   }
 
   if (patch.customer !== undefined) {

@@ -73,6 +73,7 @@ export default function EditOrderPage() {
         initialDueDate={order.dueDate.slice(0, 10)}
         initialLines={draftLinesFromLineItems(order.lineItems)}
         lineItemsLocked={!order.canEditLineItems}
+        metadataLocked={!order.canEditMetadata}
         submitLabel="Save changes"
         submittingLabel="Saving…"
         onSubmit={handleSubmit}

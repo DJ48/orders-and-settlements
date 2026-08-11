@@ -37,12 +37,19 @@ export function draftLinesFromLineItems(lineItems: LineItem[]): DraftLine[] {
 function computePreviewCents(lines: DraftLine[]): number | null {
   let total = 0;
   for (const line of lines) {
-    const qty = Number(line.quantity);
-    const priceCents = parseDollarsToCents(line.unitPrice || '0');
-    if (!Number.isInteger(qty) || qty < 1 || priceCents === null) return null;
-    total += qty * priceCents;
+    const lineTotal = computeLineTotalCents(line);
+    if (lineTotal === null) return null;
+    total += lineTotal;
   }
   return total;
+}
+
+/** Per-row total shown next to each line — same math as computePreviewCents, one line at a time. */
+function computeLineTotalCents(line: DraftLine): number | null {
+  const qty = Number(line.quantity);
+  const priceCents = parseDollarsToCents(line.unitPrice || '0');
+  if (!Number.isInteger(qty) || qty < 1 || priceCents === null) return null;
+  return qty * priceCents;
 }
 
 export interface OrderFormSubmitData {
@@ -55,9 +62,14 @@ interface OrderFormProps {
   initialCustomer?: string;
   initialDueDate?: string;
   initialLines?: DraftLine[];
-  /** True once any payment exists — line items become read-only, not just disabled, since the
-   *  server enforces the same rule and there is nothing a client-side toggle could change. */
+  /** True once any payment exists — the server rejects a line-item change once money has been
+   *  collected against this specific total, regardless of how much or whether it's overdue. */
   lineItemsLocked?: boolean;
+  /** Narrower than lineItemsLocked: false only once the order is fully paid or overdue, since
+   *  those are the only states where a customer/dueDate edit could rewrite something already
+   *  true (a settled order's paidLate flag, or an overdue order's overdue-ness). A partially
+   *  paid order that's still on track has nothing at risk yet, so it stays editable. */
+  metadataLocked?: boolean;
   submitLabel: string;
   submittingLabel: string;
   onSubmit: (data: OrderFormSubmitData) => Promise<void>;
@@ -68,6 +80,7 @@ export function OrderForm({
   initialDueDate = '',
   initialLines,
   lineItemsLocked = false,
+  metadataLocked = false,
   submitLabel,
   submittingLabel,
   onSubmit,
@@ -79,6 +92,9 @@ export function OrderForm({
   );
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  // Every field locked at once — nothing on this page could be submitted successfully.
+  const nothingEditable = lineItemsLocked && metadataLocked;
 
   const previewCents = useMemo(
     () => (lineItemsLocked ? null : computePreviewCents(lines)),
@@ -122,6 +138,12 @@ export function OrderForm({
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
+      {nothingEditable && (
+        <p className="rounded-lg border border-black/10 bg-black/5 px-3 py-2 text-sm text-black/60 dark:border-white/10 dark:bg-white/5 dark:text-white/60">
+          This order is locked because it's been paid in full or gone overdue — nothing below can be edited.
+        </p>
+      )}
+
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div className="space-y-1">
           <label htmlFor="customer" className="text-sm font-medium">
@@ -130,16 +152,17 @@ export function OrderForm({
           <input
             id="customer"
             required
+            disabled={metadataLocked}
             value={customer}
             onChange={(e) => setCustomer(e.target.value)}
-            className="w-full rounded-lg border border-black/15 bg-transparent px-3 py-2 text-sm outline-none transition-colors focus:border-accent dark:border-white/20"
+            className="w-full rounded-lg border border-black/15 bg-transparent px-3 py-2 text-sm outline-none transition-colors focus:border-accent disabled:cursor-not-allowed disabled:opacity-50 dark:border-white/20"
           />
         </div>
         <div className="space-y-1">
           <label htmlFor="dueDate" className="text-sm font-medium">
             Due date
           </label>
-          <DatePicker id="dueDate" required value={dueDate} onChange={setDueDate} />
+          <DatePicker id="dueDate" required disabled={metadataLocked} value={dueDate} onChange={setDueDate} />
         </div>
       </div>
 
@@ -148,16 +171,18 @@ export function OrderForm({
           <h2 className="text-sm font-medium">Line items</h2>
           {!lineItemsLocked && (
             <button type="button" onClick={addLine} className="text-sm underline underline-offset-4">
-              + Add line
+              + Add Line Item
             </button>
           )}
         </div>
 
         {lineItemsLocked ? (
           <div className="space-y-2">
-            <p className="text-xs text-black/50 dark:text-white/50">
-              Line items are locked because a payment has been recorded against this order.
-            </p>
+            {!nothingEditable && (
+              <p className="text-xs text-black/50 dark:text-white/50">
+                Line items are locked because a payment has been recorded against this order.
+              </p>
+            )}
             <div className="overflow-hidden rounded-lg border border-black/10 dark:border-white/10">
               <table className="w-full text-sm">
                 <thead className="bg-black/5 text-left text-xs uppercase tracking-wide text-black/50 dark:bg-white/5 dark:text-white/50">
@@ -165,61 +190,81 @@ export function OrderForm({
                     <th className="px-4 py-2 font-medium">Description</th>
                     <th className="px-4 py-2 font-medium">Qty</th>
                     <th className="px-4 py-2 font-medium">Unit price</th>
+                    <th className="px-4 py-2 font-medium">Item Total</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-black/10 dark:divide-white/10">
-                  {lines.map((line, i) => (
-                    <tr key={i}>
-                      <td className="px-4 py-2">{line.description}</td>
-                      <td className="px-4 py-2">{line.quantity}</td>
-                      <td className="px-4 py-2">${line.unitPrice}</td>
-                    </tr>
-                  ))}
+                  {lines.map((line, i) => {
+                    const lineTotalCents = computeLineTotalCents(line);
+                    return (
+                      <tr key={i}>
+                        <td className="px-4 py-2">{line.description}</td>
+                        <td className="px-4 py-2">{line.quantity}</td>
+                        <td className="px-4 py-2">${line.unitPrice}</td>
+                        <td className="px-4 py-2 tabular-nums">
+                          {lineTotalCents === null ? '—' : formatCentsAsCurrency(lineTotalCents)}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
           </div>
         ) : (
           <div className="space-y-2">
-            {lines.map((line, i) => (
-              <div key={i} className="grid grid-cols-[1fr_5rem_7rem_auto] gap-2">
-                <input
-                  placeholder="Description"
-                  required
-                  value={line.description}
-                  onChange={(e) => updateLine(i, { description: e.target.value })}
-                  className="rounded-md border border-black/15 bg-transparent px-3 py-2 text-sm outline-none focus:border-accent dark:border-white/20"
-                />
-                <input
-                  type="number"
-                  min={1}
-                  step={1}
-                  placeholder="Qty"
-                  required
-                  value={line.quantity}
-                  onChange={(e) => updateLine(i, { quantity: e.target.value })}
-                  className="rounded-md border border-black/15 bg-transparent px-3 py-2 text-sm outline-none focus:border-accent dark:border-white/20"
-                />
-                <input
-                  type="text"
-                  inputMode="decimal"
-                  placeholder="Unit price"
-                  required
-                  value={line.unitPrice}
-                  onChange={(e) => updateLine(i, { unitPrice: e.target.value })}
-                  className="rounded-md border border-black/15 bg-transparent px-3 py-2 text-sm outline-none focus:border-accent dark:border-white/20"
-                />
-                <button
-                  type="button"
-                  onClick={() => removeLine(i)}
-                  disabled={lines.length === 1}
-                  className="rounded-md px-2 text-sm text-black/50 hover:text-red-600 disabled:opacity-30 dark:text-white/50"
-                  aria-label="Remove line"
-                >
-                  ✕
-                </button>
-              </div>
-            ))}
+            <div className="grid grid-cols-[1fr_5rem_7rem_7rem_auto] gap-2 px-1 text-xs font-medium uppercase tracking-wide text-black/50 dark:text-white/50">
+              <span>Description</span>
+              <span>Qty</span>
+              <span>Unit price</span>
+              <span>Item Total</span>
+              <span aria-hidden="true" />
+            </div>
+            {lines.map((line, i) => {
+              const lineTotalCents = computeLineTotalCents(line);
+              return (
+                <div key={i} className="grid grid-cols-[1fr_5rem_7rem_7rem_auto] gap-2">
+                  <input
+                    placeholder="Description"
+                    required
+                    value={line.description}
+                    onChange={(e) => updateLine(i, { description: e.target.value })}
+                    className="rounded-md border border-black/15 bg-transparent px-3 py-2 text-sm outline-none focus:border-accent dark:border-white/20"
+                  />
+                  <input
+                    type="number"
+                    min={1}
+                    step={1}
+                    placeholder="Qty"
+                    required
+                    value={line.quantity}
+                    onChange={(e) => updateLine(i, { quantity: e.target.value })}
+                    className="rounded-md border border-black/15 bg-transparent px-3 py-2 text-sm outline-none focus:border-accent dark:border-white/20"
+                  />
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    placeholder="Unit price"
+                    required
+                    value={line.unitPrice}
+                    onChange={(e) => updateLine(i, { unitPrice: e.target.value })}
+                    className="rounded-md border border-black/15 bg-transparent px-3 py-2 text-sm outline-none focus:border-accent dark:border-white/20"
+                  />
+                  <div className="flex items-center px-3 text-sm tabular-nums text-black/70 dark:text-white/70">
+                    {lineTotalCents === null ? '—' : formatCentsAsCurrency(lineTotalCents)}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => removeLine(i)}
+                    disabled={lines.length === 1}
+                    className="rounded-md px-2 text-sm text-black/50 hover:text-red-600 disabled:opacity-30 dark:text-white/50"
+                    aria-label="Remove line"
+                  >
+                    ✕
+                  </button>
+                </div>
+              );
+            })}
           </div>
         )}
       </div>
@@ -241,7 +286,8 @@ export function OrderForm({
 
       <button
         type="submit"
-        disabled={submitting || (!lineItemsLocked && (previewCents === null || previewCents < 1))}
+        disabled={nothingEditable || submitting || (!lineItemsLocked && (previewCents === null || previewCents < 1))}
+        title={nothingEditable ? "This order is locked because it's been paid in full or gone overdue" : undefined}
         className="w-full rounded-md bg-foreground px-4 py-2 text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50"
       >
         {submitting ? submittingLabel : submitLabel}

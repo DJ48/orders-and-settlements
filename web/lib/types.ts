@@ -38,6 +38,8 @@ export interface Order {
   status: OrderStatus;
   paidLate: boolean;
   canEditLineItems: boolean;
+  /** Narrower than canEditLineItems: false only once the order is fully paid or overdue. */
+  canEditMetadata: boolean;
   createdAt: string;
   updatedAt: string;
 }

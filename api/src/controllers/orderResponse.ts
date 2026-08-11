@@ -18,17 +18,25 @@ interface DerivableOrderFields {
 }
 
 function derivedFields(order: DerivableOrderFields) {
+  const status = deriveStatus({
+    amountPaidCents: order.amountPaidCents,
+    totalCents: order.totalCents,
+    dueDate: order.dueDate,
+  });
+
   return {
-    status: deriveStatus({
-      amountPaidCents: order.amountPaidCents,
-      totalCents: order.totalCents,
-      dueDate: order.dueDate,
-    }),
+    status,
     amountDueCents: amountDueCents(order.amountPaidCents, order.totalCents),
     paidLate: isPaidLate(order.lastPaymentOn, order.dueDate, order.amountPaidCents, order.totalCents),
     // Lives on the scalar, not the payments array — amountPaidCents and payments.length can
     // never disagree, since both change together in the same atomic write.
     canEditLineItems: order.amountPaidCents === 0,
+    // Narrower than canEditLineItems: customer/dueDate stay editable through partially_paid as
+    // long as the order isn't overdue yet — there's nothing already-true for an edit to
+    // silently rewrite until the order is fully paid (paidLate) or overdue (with money at
+    // stake). Must match the guard in orders.service.ts#updateOrder exactly, or the UI would
+    // show fields as editable that the server then rejects.
+    canEditMetadata: !(order.amountPaidCents > 0 && (status === 'paid' || status === 'overdue')),
   };
 }
 

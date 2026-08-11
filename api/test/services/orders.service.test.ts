@@ -217,10 +217,38 @@ describe('updateOrder', () => {
     ).rejects.toThrow(OrderLockedError);
   });
 
-  it('still allows metadata edits (customer, dueDate) even once locked', async () => {
+  it('still allows metadata edits (customer, dueDate) while partially paid but not yet overdue', async () => {
     const user = await makeUser('r@example.com');
     const order = await createOrder(user._id, { customer: 'Acme', dueDate: '2026-08-20', lineItems: sampleLineItems() });
-    await Order.updateOne({ _id: order._id }, { $set: { amountPaidCents: 40_000 } });
+    await Order.updateOne({ _id: order._id }, { $set: { amountPaidCents: 40_000 } }); // $600 still due
+
+    const updated = await updateOrder(user._id, order._id.toString(), { customer: 'Renamed' });
+    expect(updated.customer).toBe('Renamed');
+  });
+
+  it('rejects metadata edits once the order is fully paid — the balance itself has nothing left at risk, but paidLate does', async () => {
+    const user = await makeUser('metadata-paid@example.com');
+    const order = await createOrder(user._id, { customer: 'Acme', dueDate: '2026-08-20', lineItems: sampleLineItems() });
+    await Order.updateOne({ _id: order._id }, { $set: { amountPaidCents: 100_000 } }); // fully settled
+
+    await expect(
+      updateOrder(user._id, order._id.toString(), { customer: 'Renamed' }),
+    ).rejects.toThrow(OrderLockedError);
+  });
+
+  it('rejects metadata edits once a partially-paid order has gone overdue', async () => {
+    const user = await makeUser('metadata-overdue@example.com');
+    const order = await createOrder(user._id, { customer: 'Acme', dueDate: '2020-01-01', lineItems: sampleLineItems() });
+    await Order.updateOne({ _id: order._id }, { $set: { amountPaidCents: 40_000 } }); // partial + overdue
+
+    await expect(
+      updateOrder(user._id, order._id.toString(), { dueDate: '2026-12-31' }),
+    ).rejects.toThrow(OrderLockedError);
+  });
+
+  it('still allows metadata edits on an overdue order that has zero payments — nothing paid means nothing to protect', async () => {
+    const user = await makeUser('metadata-overdue-unpaid@example.com');
+    const order = await createOrder(user._id, { customer: 'Acme', dueDate: '2020-01-01', lineItems: sampleLineItems() });
 
     const updated = await updateOrder(user._id, order._id.toString(), { customer: 'Renamed' });
     expect(updated.customer).toBe('Renamed');
