@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { api, ApiError } from '@/lib/api';
 import { formatCentsAsCurrency } from '@/lib/money';
 import { StatusBadge } from '@/components/StatusBadge';
+import { AppHeader } from '@/components/AppHeader';
 import type { OrderStatus, OrderSummary } from '@/lib/types';
 
 const FILTERS: { label: string; value: OrderStatus | 'all' }[] = [
@@ -64,30 +65,18 @@ function DashboardContent() {
     router.push(`/dashboard${params.toString() ? `?${params}` : ''}`);
   }
 
-  async function handleLogout() {
-    await api.logout().catch(() => {});
-    router.push('/login');
-  }
-
   return (
     <main className="mx-auto max-w-5xl px-6 py-10">
-      <div className="mb-8 flex items-center justify-between">
-        <h1 className="text-2xl font-semibold tracking-tight">Orders</h1>
-        <div className="flex gap-3">
-          <Link
-            href="/orders/new"
-            className="rounded-md bg-foreground px-4 py-2 text-sm font-medium text-background transition-opacity hover:opacity-90"
-          >
-            New order
-          </Link>
-          <button
-            onClick={handleLogout}
-            className="rounded-md border border-black/15 px-4 py-2 text-sm font-medium transition-colors hover:bg-black/5 dark:border-white/20 dark:hover:bg-white/10"
-          >
-            Sign out
-          </button>
-        </div>
-      </div>
+      <AppHeader>
+        <Link
+          href="/orders/new"
+          className="rounded-md bg-foreground px-3 py-1.5 text-sm font-medium text-background transition-opacity hover:opacity-90"
+        >
+          New order
+        </Link>
+      </AppHeader>
+
+      <h1 className="mb-6 text-2xl font-semibold tracking-tight">Orders</h1>
 
       <div className="mb-6 flex flex-wrap gap-2">
         {FILTERS.map((f) => (

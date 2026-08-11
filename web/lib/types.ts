@@ -63,6 +63,18 @@ export interface CreateOrderInput {
   lineItems: LineItemInput[];
 }
 
+/**
+ * All fields optional — the API applies whichever are present. `lineItems` is only accepted
+ * while `canEditLineItems` is true; the server rejects it with 409 ORDER_LOCKED otherwise,
+ * which is why the edit page still sends the request rather than hiding the field client-side
+ * only — the client-side gate is a courtesy, the server enforcement is what actually matters.
+ */
+export interface UpdateOrderInput {
+  customer?: string;
+  dueDate?: string;
+  lineItems?: LineItemInput[];
+}
+
 export interface RecordPaymentInput {
   amountCents: number;
   paidOn: string;

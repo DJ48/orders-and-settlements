@@ -3,6 +3,7 @@ import type {
   OrderSummary,
   OrderStatus,
   CreateOrderInput,
+  UpdateOrderInput,
   RecordPaymentInput,
   User,
   ApiErrorBody,
@@ -74,6 +75,11 @@ export const api = {
 
   createOrder: (input: CreateOrderInput) =>
     request<Order>('/orders', { method: 'POST', body: JSON.stringify(input) }),
+
+  updateOrder: (id: string, input: UpdateOrderInput) =>
+    request<Order>(`/orders/${id}`, { method: 'PATCH', body: JSON.stringify(input) }),
+
+  deleteOrder: (id: string) => request<void>(`/orders/${id}`, { method: 'DELETE' }),
 
   recordPayment: (orderId: string, input: RecordPaymentInput) =>
     request<Order>(`/orders/${orderId}/payments`, {
