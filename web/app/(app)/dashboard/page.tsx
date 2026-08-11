@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { api, ApiError } from '@/lib/api';
 import { formatCentsAsCurrency } from '@/lib/money';
 import { StatusBadge } from '@/components/StatusBadge';
+import { DatePicker } from '@/components/DatePicker';
 import type { OrderStatus, OrderSummary } from '@/lib/types';
 
 const FILTERS: { label: string; value: OrderStatus | 'all' }[] = [
@@ -31,6 +32,68 @@ function StatCard({ label, value, tone }: { label: string; value: string; tone?:
       >
         {value}
       </p>
+    </div>
+  );
+}
+
+/**
+ * Builds 'YYYY-MM-DD' from the LOCAL y/m/d, never via toISOString() — that goes through UTC,
+ * which rolls the date back a day whenever the browser's timezone is ahead of UTC (local
+ * midnight on the 1st is still "the 31st" in UTC). Same pitfall DatePicker.tsx's own doc
+ * comment calls out for exactly this reason.
+ */
+function toDateInputValue(date: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+/**
+ * Defaults to "this month so far" — a reasonable starting point, not a business rule — and
+ * clamps "to" so a user can't pick a range the server would just reject with a 400. The
+ * download itself is a plain same-origin <a href>, not a fetch: the response is a CSV file
+ * (Content-Disposition: attachment), so the browser downloads it directly rather than the page
+ * fetching and parsing it — no blob handling needed, and the session cookie rides along exactly
+ * like it would for any other same-origin navigation.
+ */
+function ExportCsvControl() {
+  const today = useMemo(() => new Date(), []);
+  const [from, setFrom] = useState(() => toDateInputValue(new Date(today.getFullYear(), today.getMonth(), 1)));
+  const [to, setTo] = useState(() => toDateInputValue(today));
+
+  const isValidRange = from !== '' && to !== '' && from <= to;
+
+  return (
+    <div className="flex flex-wrap items-end gap-2">
+      <div className="space-y-1">
+        <label htmlFor="exportFrom" className="text-xs font-medium text-foreground/50">
+          Export due date from
+        </label>
+        <DatePicker id="exportFrom" value={from} onChange={setFrom} />
+      </div>
+      <div className="space-y-1">
+        <label htmlFor="exportTo" className="text-xs font-medium text-foreground/50">
+          to
+        </label>
+        <DatePicker id="exportTo" value={to} onChange={setTo} min={from} />
+      </div>
+      {isValidRange ? (
+        <a
+          href={api.orderExportUrl(from, to)}
+          className="flex items-center gap-1.5 rounded-lg border border-border-subtle bg-surface px-3.5 py-2 text-sm font-medium transition-colors hover:bg-surface-hover"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M12 3v13M7 11l5 5 5-5M4 21h16" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+          Export CSV
+        </a>
+      ) : (
+        <span
+          title="Pick a valid date range to export"
+          className="cursor-not-allowed rounded-lg border border-border-subtle bg-surface px-3.5 py-2 text-sm font-medium text-foreground/30"
+        >
+          Export CSV
+        </span>
+      )}
     </div>
   );
 }
@@ -108,20 +171,23 @@ function DashboardContent() {
         </div>
       )}
 
-      <div className="mb-6 flex flex-wrap gap-2">
-        {FILTERS.map((f) => (
-          <button
-            key={f.value}
-            onClick={() => setFilter(f.value)}
-            className={`rounded-full px-3.5 py-1.5 text-sm font-medium transition-colors ${
-              activeFilter === f.value
-                ? 'bg-accent text-accent-foreground'
-                : 'bg-surface text-foreground/70 hover:bg-surface-hover'
-            }`}
-          >
-            {f.label}
-          </button>
-        ))}
+      <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
+        <div className="flex flex-wrap gap-2">
+          {FILTERS.map((f) => (
+            <button
+              key={f.value}
+              onClick={() => setFilter(f.value)}
+              className={`rounded-full px-3.5 py-1.5 text-sm font-medium transition-colors ${
+                activeFilter === f.value
+                  ? 'bg-accent text-accent-foreground'
+                  : 'bg-surface text-foreground/70 hover:bg-surface-hover'
+              }`}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+        <ExportCsvControl />
       </div>
 
       {error && (

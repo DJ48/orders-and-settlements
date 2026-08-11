@@ -64,6 +64,30 @@ export async function listOrders(userId: Types.ObjectId, options: ListOrdersOpti
     .lean();
 }
 
+export interface ExportOrdersOptions {
+  /** Both already normalised to UTC midnight by the caller — same convention as dueDate itself. */
+  from: Date;
+  to: Date;
+}
+
+/**
+ * A range on `dueDate` alone, filtered by the caller-supplied window rather than a status. Kept
+ * separate from `listOrders` rather than folded into it — the two don't share a shape (one takes
+ * a status, the other a date range) and forcing them into one function's branches would just
+ * make both harder to read for no shared behaviour beyond the ownership predicate.
+ */
+export async function exportOrdersInRange(userId: Types.ObjectId, options: ExportOrdersOptions) {
+  return Order.find({
+    userId,
+    deletedAt: null,
+    dueDate: { $gte: options.from, $lte: options.to },
+  })
+    .select('-lineItems -payments')
+    .sort({ dueDate: 1 })
+    .limit(5_000) // generous hard safety cap, not real pagination — same posture as listOrders
+    .lean();
+}
+
 export async function getOrder(userId: Types.ObjectId, orderId: string): Promise<OrderDocument> {
   assertValidId(orderId);
 
