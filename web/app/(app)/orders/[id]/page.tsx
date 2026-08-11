@@ -41,7 +41,11 @@ function PaymentModal({
 
     const amountCents = parseDollarsToCents(amount);
     if (amountCents === null || amountCents < 1) {
-      setError('Enter a valid amount.');
+      setError('Amount should be greater than 0.');
+      return;
+    }
+    if (amountCents > order.amountDueCents) {
+      setError(`Amount can't be greater than Due Amount (${formatCentsAsCurrency(order.amountDueCents)}).`);
       return;
     }
 
@@ -223,9 +227,27 @@ export default function OrderDetailPage() {
       </div>
 
       <div className="mb-8 flex items-center gap-4">
-        <Link href={`/orders/${order._id}/edit`} className="text-sm font-medium text-accent underline underline-offset-4">
-          Edit
-        </Link>
+        {order.canEditLineItems || order.canEditMetadata ? (
+          <Link href={`/orders/${order._id}/edit`} className="text-sm font-medium text-accent underline underline-offset-4">
+            Edit
+          </Link>
+        ) : (
+          <span className="flex items-center gap-1.5 text-sm font-medium text-foreground/30">
+            Edit
+            <span
+              tabIndex={0}
+              title="This order can no longer be edited because it's been paid in full or gone overdue"
+              aria-label="This order can no longer be edited because it's been paid in full or gone overdue"
+              className="inline-flex cursor-help text-foreground/40"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.5" />
+                <path d="M12 11v5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                <circle cx="12" cy="8" r="1" fill="currentColor" />
+              </svg>
+            </span>
+          </span>
+        )}
         <button
           onClick={handleDelete}
           disabled={!order.canEditLineItems || deleting}
@@ -268,7 +290,7 @@ export default function OrderDetailPage() {
                 <th className="px-4 py-2 font-medium">Description</th>
                 <th className="px-4 py-2 font-medium">Qty</th>
                 <th className="px-4 py-2 font-medium">Unit price</th>
-                <th className="px-4 py-2 text-right font-medium">Total</th>
+                <th className="px-4 py-2 text-right font-medium">Item Total</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border-subtle">

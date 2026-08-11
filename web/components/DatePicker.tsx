@@ -77,9 +77,10 @@ export interface DatePickerProps {
   required?: boolean;
   /** Dates strictly before this are not selectable. 'YYYY-MM-DD'. */
   min?: string;
+  disabled?: boolean;
 }
 
-export function DatePicker({ id, value, onChange, required, min }: DatePickerProps) {
+export function DatePicker({ id, value, onChange, required, min, disabled }: DatePickerProps) {
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -151,10 +152,11 @@ export function DatePicker({ id, value, onChange, required, min }: DatePickerPro
       <button
         id={id}
         type="button"
+        disabled={disabled}
         onClick={() => (open ? setOpen(false) : openPicker())}
         aria-haspopup="dialog"
         aria-expanded={open}
-        className="flex w-full items-center justify-between rounded-lg border border-black/15 bg-transparent px-3 py-2 text-left text-sm outline-none transition-colors focus:border-accent dark:border-white/20"
+        className="flex w-full items-center justify-between rounded-lg border border-black/15 bg-transparent px-3 py-2 text-left text-sm outline-none transition-colors focus:border-accent disabled:cursor-not-allowed disabled:opacity-50 dark:border-white/20"
       >
         <span className={value ? '' : 'text-black/40 dark:text-white/40'}>
           {value ? formatDisplay(value) : 'Select a date'}

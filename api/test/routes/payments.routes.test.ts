@@ -95,9 +95,9 @@ describe('POST /api/v1/orders/:id/payments', () => {
     expect(detail.body.payments[0]).toMatchObject({ amountCents: 40_000, note: 'Deposit' });
   });
 
-  it("locks line-item editing the moment a payment lands, but customer/dueDate stay editable", async () => {
+  it('locks line-item editing the moment a payment lands, but customer/dueDate stay editable while not yet overdue', async () => {
     const cookie = await signupAndLogin('c@example.com');
-    const orderId = await createSampleOrder(cookie);
+    const orderId = await createSampleOrder(cookie); // due 2026-08-20, well in the future
 
     await request(app)
       .post(`/api/v1/orders/${orderId}/payments`)
