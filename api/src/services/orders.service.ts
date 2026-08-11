@@ -1,10 +1,10 @@
 import mongoose, { type Types } from 'mongoose';
 import { Order, type OrderDocument } from '../models/Order';
-import { AuditLog, type AuditAction } from '../models/AuditLog';
 import { computeTotals, type LineItemInput } from '../utils/totals';
 import { MoneyError } from '../utils/money';
 import { utcDateOnly, statusFilter, type OrderStatus } from '../utils/status';
 import { NotFoundError, ValidationError, OrderLockedError, ConflictError } from '../utils/errors';
+import { recordAudit, snapshotOf } from './audit.service';
 import type { RequestContext } from './auth.service';
 
 export type { RequestContext };
@@ -16,35 +16,6 @@ export type { RequestContext };
  * can't accidentally return someone else's data. A miss is always NotFoundError, never a
  * distinguishable "exists but isn't yours", so the API never confirms which IDs exist.
  */
-
-async function recordAudit(
-  action: AuditAction,
-  opts: {
-    userId: Types.ObjectId;
-    orderId: Types.ObjectId;
-    context?: RequestContext;
-    snapshot?: { totalCents: number; amountPaidCents: number; settlementState: string };
-    delta?: Record<string, unknown>;
-  },
-): Promise<void> {
-  await AuditLog.create({
-    userId: opts.userId,
-    orderId: opts.orderId,
-    action,
-    requestId: opts.context?.requestId,
-    actor: { ip: opts.context?.ip, userAgent: opts.context?.userAgent },
-    snapshot: opts.snapshot,
-    delta: opts.delta,
-  });
-}
-
-function snapshotOf(order: OrderDocument) {
-  return {
-    totalCents: order.totalCents,
-    amountPaidCents: order.amountPaidCents,
-    settlementState: order.settlementState,
-  };
-}
 
 /** Never trust a client-supplied total — this is the only place totals are computed. */
 function computeTotalsOrThrow(lineItems: LineItemInput[]) {
