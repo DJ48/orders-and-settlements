@@ -20,6 +20,10 @@ const nextConfig: NextConfig = {
     const apiUrl = process.env.API_URL ?? "http://localhost:4000";
     return [{ source: "/api/:path*", destination: `${apiUrl}/api/:path*` }];
   },
+  // Default bottom-left collides with the sidebar's sticky footer (Sign out).
+  devIndicators: {
+    position: "bottom-right",
+  },
 };
 
 export default nextConfig;
