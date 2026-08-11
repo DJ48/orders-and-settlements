@@ -36,7 +36,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex min-h-full">
-      <aside className="hidden w-64 shrink-0 flex-col border-r border-border-subtle bg-surface md:flex">
+      <aside className="sticky top-0 hidden h-screen w-64 shrink-0 flex-col border-r border-border-subtle bg-surface md:flex">
         <div className="px-6 py-6">
           <Link href="/dashboard" className="text-lg font-semibold tracking-tight">
             Orders <span className="text-accent">&amp;</span> Settlements
