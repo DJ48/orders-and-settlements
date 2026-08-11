@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { api, ApiError } from '@/lib/api';
 import { formatCentsAsCurrency, parseDollarsToCents } from '@/lib/money';
 import { StatusBadge } from '@/components/StatusBadge';
+import { AppHeader } from '@/components/AppHeader';
 import type { Order } from '@/lib/types';
 
 function formatDate(iso: string) {
@@ -151,6 +152,8 @@ export default function OrderDetailPage() {
   const [order, setOrder] = useState<Order | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showModal, setShowModal] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setError(null);
@@ -175,9 +178,25 @@ export default function OrderDetailPage() {
     load();
   }, [load]);
 
+  async function handleDelete() {
+    if (!order) return;
+    if (!window.confirm(`Delete the order for ${order.customer}? This cannot be undone.`)) return;
+
+    setDeleteError(null);
+    setDeleting(true);
+    try {
+      await api.deleteOrder(order._id);
+      router.push('/dashboard');
+    } catch (err) {
+      setDeleteError(err instanceof ApiError ? err.message : 'Could not delete this order.');
+      setDeleting(false);
+    }
+  }
+
   if (error) {
     return (
       <main className="mx-auto max-w-3xl px-6 py-10">
+        <AppHeader />
         <p role="alert" className="text-sm text-red-600 dark:text-red-400">
           {error}
         </p>
@@ -189,22 +208,49 @@ export default function OrderDetailPage() {
   }
 
   if (!order) {
-    return <main className="mx-auto max-w-3xl px-6 py-10 text-sm text-black/50 dark:text-white/50">Loading…</main>;
+    return (
+      <main className="mx-auto max-w-3xl px-6 py-10">
+        <AppHeader />
+        <p className="text-sm text-black/50 dark:text-white/50">Loading…</p>
+      </main>
+    );
   }
 
   return (
     <main className="mx-auto max-w-3xl px-6 py-10">
+      <AppHeader />
+
       <Link href="/dashboard" className="text-sm text-black/50 underline underline-offset-4 dark:text-white/50">
         ← Back to dashboard
       </Link>
 
-      <div className="mt-4 mb-8 flex items-start justify-between">
+      <div className="mt-4 mb-2 flex items-start justify-between">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">{order.customer}</h1>
           <p className="mt-1 text-sm text-black/60 dark:text-white/60">Due {formatDate(order.dueDate)}</p>
         </div>
         <StatusBadge status={order.status} paidLate={order.paidLate} />
       </div>
+
+      <div className="mb-8 flex items-center gap-4">
+        <Link href={`/orders/${order._id}/edit`} className="text-sm underline underline-offset-4">
+          Edit
+        </Link>
+        <button
+          onClick={handleDelete}
+          disabled={!order.canEditLineItems || deleting}
+          title={!order.canEditLineItems ? 'Cannot delete an order with payments recorded against it' : undefined}
+          className="text-sm text-red-600 underline underline-offset-4 disabled:cursor-not-allowed disabled:text-black/30 disabled:no-underline dark:text-red-400 dark:disabled:text-white/30"
+        >
+          {deleting ? 'Deleting…' : 'Delete'}
+        </button>
+      </div>
+
+      {deleteError && (
+        <p role="alert" className="mb-6 text-sm text-red-600 dark:text-red-400">
+          {deleteError}
+        </p>
+      )}
 
       <section className="mb-8">
         <h2 className="mb-3 text-sm font-medium text-black/60 dark:text-white/60">Line items</h2>
