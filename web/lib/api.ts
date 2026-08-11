@@ -86,4 +86,10 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(input),
     }),
+
+  // Not routed through request() — the response is a CSV file, not JSON, and the browser
+  // downloads it directly (Content-Disposition: attachment) rather than the page fetching and
+  // parsing it. A plain same-origin URL for an <a href> to point at.
+  orderExportUrl: (from: string, to: string) =>
+    `/api/v1/orders/export?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
 };

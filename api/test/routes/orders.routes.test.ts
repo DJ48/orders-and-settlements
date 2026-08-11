@@ -142,6 +142,94 @@ describe('GET /api/v1/orders', () => {
   });
 });
 
+describe('GET /api/v1/orders/export', () => {
+  it('requires authentication', async () => {
+    const res = await request(app).get('/api/v1/orders/export?from=2026-01-01&to=2026-12-31');
+    expect(res.status).toBe(401);
+  });
+
+  it('is not swallowed by the /:id route', async () => {
+    const cookie = await signupAndLogin('export-routing@example.com');
+    const res = await request(app).get('/api/v1/orders/export?from=2026-01-01&to=2026-12-31').set('Cookie', cookie);
+    expect(res.status).not.toBe(404);
+  });
+
+  it('returns a CSV with the right headers and a row per order due inside the range', async () => {
+    const cookie = await signupAndLogin('export-a@example.com');
+    await request(app).post('/api/v1/orders').set('Cookie', cookie).send({ customer: 'In Range', dueDate: '2026-06-15', lineItems: sampleLineItems() });
+    await request(app).post('/api/v1/orders').set('Cookie', cookie).send({ customer: 'Before Range', dueDate: '2026-01-01', lineItems: sampleLineItems() });
+    await request(app).post('/api/v1/orders').set('Cookie', cookie).send({ customer: 'After Range', dueDate: '2026-12-31', lineItems: sampleLineItems() });
+
+    const res = await request(app).get('/api/v1/orders/export?from=2026-06-01&to=2026-06-30').set('Cookie', cookie);
+
+    expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toContain('text/csv');
+    expect(res.headers['content-disposition']).toContain('attachment');
+
+    const lines = res.text.trim().split('\r\n');
+    expect(lines[0]).toBe('Customer,Due Date,Status,Paid Late,Total,Paid,Due,Created At');
+    expect(lines).toHaveLength(2); // header + exactly the one in-range order
+    expect(lines[1]).toContain('In Range');
+    expect(lines[1]).toContain('2026-06-15');
+  });
+
+  it('includes the boundary dates themselves (inclusive range)', async () => {
+    const cookie = await signupAndLogin('export-b@example.com');
+    await request(app).post('/api/v1/orders').set('Cookie', cookie).send({ customer: 'On Start', dueDate: '2026-06-01', lineItems: sampleLineItems() });
+    await request(app).post('/api/v1/orders').set('Cookie', cookie).send({ customer: 'On End', dueDate: '2026-06-30', lineItems: sampleLineItems() });
+
+    const res = await request(app).get('/api/v1/orders/export?from=2026-06-01&to=2026-06-30').set('Cookie', cookie);
+    const lines = res.text.trim().split('\r\n');
+    expect(lines).toHaveLength(3); // header + both boundary orders
+  });
+
+  it("only exports the caller's own orders", async () => {
+    const owner = await signupAndLogin('export-owner@example.com');
+    const other = await signupAndLogin('export-other@example.com');
+    await request(app).post('/api/v1/orders').set('Cookie', owner).send({ customer: 'Mine', dueDate: '2026-06-15', lineItems: sampleLineItems() });
+    await request(app).post('/api/v1/orders').set('Cookie', other).send({ customer: 'Theirs', dueDate: '2026-06-15', lineItems: sampleLineItems() });
+
+    const res = await request(app).get('/api/v1/orders/export?from=2026-01-01&to=2026-12-31').set('Cookie', owner);
+    const lines = res.text.trim().split('\r\n');
+    expect(lines).toHaveLength(2);
+    expect(lines[1]).toContain('Mine');
+  });
+
+  it('reflects derived status and paidLate, not stored fields', async () => {
+    const cookie = await signupAndLogin('export-status@example.com');
+    const created = await request(app).post('/api/v1/orders').set('Cookie', cookie).send({ customer: 'Settled Late', dueDate: '2026-06-01', lineItems: sampleLineItems() });
+    await request(app)
+      .post(`/api/v1/orders/${created.body._id}/payments`)
+      .set('Cookie', cookie)
+      .send({ amountCents: 100_000, paidOn: '2026-06-10', idempotencyKey: 'export-late-1' });
+
+    const res = await request(app).get('/api/v1/orders/export?from=2026-01-01&to=2026-12-31').set('Cookie', cookie);
+    const [, row] = res.text.trim().split('\r\n');
+    expect(row).toContain('Paid');
+    expect(row).toContain('Yes'); // Paid Late column
+  });
+
+  it('rejects a malformed date', async () => {
+    const cookie = await signupAndLogin('export-c@example.com');
+    const res = await request(app).get('/api/v1/orders/export?from=not-a-date&to=2026-12-31').set('Cookie', cookie);
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('VALIDATION_ERROR');
+  });
+
+  it('rejects a range where "from" is after "to"', async () => {
+    const cookie = await signupAndLogin('export-d@example.com');
+    const res = await request(app).get('/api/v1/orders/export?from=2026-12-31&to=2026-01-01').set('Cookie', cookie);
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('VALIDATION_ERROR');
+  });
+
+  it('requires both from and to', async () => {
+    const cookie = await signupAndLogin('export-e@example.com');
+    const res = await request(app).get('/api/v1/orders/export?from=2026-01-01').set('Cookie', cookie);
+    expect(res.status).toBe(400);
+  });
+});
+
 describe('GET /api/v1/orders/:id', () => {
   it("returns 404 for another user's order — never a distinguishable 403", async () => {
     const owner = await signupAndLogin('j@example.com');

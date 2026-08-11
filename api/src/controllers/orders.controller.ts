@@ -2,8 +2,9 @@ import type { Request, Response } from 'express';
 import { z, ZodError } from 'zod';
 import * as ordersService from '../services/orders.service';
 import { ValidationError } from '../utils/errors';
-import { ORDER_STATUSES } from '../utils/status';
+import { ORDER_STATUSES, utcDateOnly } from '../utils/status';
 import { toOrderResponse, toOrderSummaryResponse } from './orderResponse';
+import { toOrdersCsv } from './orderCsv';
 
 /**
  * Controllers stay thin: validate with zod, call a service, shape the response. The derived
@@ -34,6 +35,18 @@ const ListOrdersQuerySchema = z.object({
   status: z.enum(ORDER_STATUSES).optional(),
 });
 
+const ExportOrdersQuerySchema = z
+  .object({
+    from: z.string().date('Enter a valid "from" date (YYYY-MM-DD)'),
+    to: z.string().date('Enter a valid "to" date (YYYY-MM-DD)'),
+  })
+  .refine((query) => query.from <= query.to, {
+    // Plain string comparison is safe here — both are already zod-validated YYYY-MM-DD, and
+    // that format sorts lexicographically the same as chronologically.
+    message: '"from" must be on or before "to"',
+    path: ['from'],
+  });
+
 function parse<T>(schema: z.ZodType<T>, input: unknown): T {
   const result = schema.safeParse(input);
   if (!result.success) throw ValidationError.fromZodError(result.error as ZodError);
@@ -48,6 +61,18 @@ export async function getOrders(req: Request, res: Response): Promise<void> {
   const query = parse(ListOrdersQuerySchema, req.query);
   const orders = await ordersService.listOrders(req.user!.id, { status: query.status });
   res.json(orders.map(toOrderSummaryResponse));
+}
+
+export async function getOrdersExport(req: Request, res: Response): Promise<void> {
+  const query = parse(ExportOrdersQuerySchema, req.query);
+  const orders = await ordersService.exportOrdersInRange(req.user!.id, {
+    from: utcDateOnly(new Date(query.from)),
+    to: utcDateOnly(new Date(query.to)),
+  });
+
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="orders_${query.from}_to_${query.to}.csv"`);
+  res.status(200).send(toOrdersCsv(orders));
 }
 
 export async function postOrder(req: Request, res: Response): Promise<void> {
