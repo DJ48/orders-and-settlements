@@ -15,7 +15,12 @@ import { ConflictError, UnauthenticatedError } from '../utils/errors';
 
 export const SESSION_COOKIE_NAME = 'session';
 
-const BCRYPT_COST = 12;
+// bcryptjs is a pure-JS implementation (no native binding), and cost 12 on a throttled
+// deployment CPU was measured pushing login past 3s. 7 is a deliberate trade of brute-force
+// margin for latency on this host — revisit alongside a move to native bcrypt/argon2 or a
+// less CPU-throttled host, since the hash format encodes its own cost, so raising it later
+// doesn't require migrating already-stored hashes.
+const BCRYPT_COST = 7;
 
 /**
  * Idle window: a session dies after this long with no request, but slides forward on use.
@@ -115,6 +120,17 @@ async function clearLoginAttempts(key: string): Promise<void> {
   await LoginAttempt.deleteOne({ _id: key });
 }
 
+/**
+ * Runs a write the caller doesn't need to wait on — the login response depends on neither
+ * the rate-limit bookkeeping nor the audit trail, only on the session existing. Not awaiting
+ * these takes them off the request's critical path entirely rather than merely parallelising
+ * them; `.catch` exists only so a failed background write logs instead of becoming an unhandled
+ * rejection, since nothing downstream is listening for it to reject.
+ */
+function background(promise: Promise<unknown>, label: string): void {
+  void promise.catch((err) => console.error(`[auth] background ${label} failed:`, err));
+}
+
 async function recordAudit(
   action: AuditAction,
   opts: { userId?: Types.ObjectId; context?: RequestContext; delta?: Record<string, unknown> },
@@ -181,13 +197,16 @@ export async function login(
   const passwordMatches = await bcrypt.compare(password, user?.passwordHash ?? DUMMY_HASH);
 
   if (!user || !passwordMatches) {
-    await recordLoginFailure(rateLimitKey);
-    await recordAudit('auth.login.failed', { context, delta: { email: normalizedEmail } });
+    background(recordLoginFailure(rateLimitKey), 'recordLoginFailure');
+    background(
+      recordAudit('auth.login.failed', { context, delta: { email: normalizedEmail } }),
+      'recordAudit(auth.login.failed)',
+    );
     // Deliberately identical whether the email doesn't exist or the password is wrong.
     throw new UnauthenticatedError('Invalid email or password');
   }
 
-  await clearLoginAttempts(rateLimitKey);
+  background(clearLoginAttempts(rateLimitKey), 'clearLoginAttempts');
 
   const rawToken = crypto.randomBytes(32).toString('base64url');
   const now = new Date();
@@ -203,7 +222,10 @@ export async function login(
     userAgent: context.userAgent,
   });
 
-  await recordAudit('auth.login.succeeded', { userId: user._id, context });
+  background(
+    recordAudit('auth.login.succeeded', { userId: user._id, context }),
+    'recordAudit(auth.login.succeeded)',
+  );
   return { user, rawToken, session };
 }
 
