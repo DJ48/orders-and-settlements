@@ -3,6 +3,7 @@
 import { useMemo, useState, type FormEvent } from 'react';
 import { ApiError } from '@/lib/api';
 import { formatCentsAsCurrency, parseDollarsToCents } from '@/lib/money';
+import { DatePicker } from '@/components/DatePicker';
 import type { LineItem, LineItemInput } from '@/lib/types';
 
 /**
@@ -131,21 +132,14 @@ export function OrderForm({
             required
             value={customer}
             onChange={(e) => setCustomer(e.target.value)}
-            className="w-full rounded-md border border-black/15 bg-transparent px-3 py-2 text-sm outline-none focus:border-foreground dark:border-white/20"
+            className="w-full rounded-lg border border-black/15 bg-transparent px-3 py-2 text-sm outline-none transition-colors focus:border-accent dark:border-white/20"
           />
         </div>
         <div className="space-y-1">
           <label htmlFor="dueDate" className="text-sm font-medium">
             Due date
           </label>
-          <input
-            id="dueDate"
-            type="date"
-            required
-            value={dueDate}
-            onChange={(e) => setDueDate(e.target.value)}
-            className="w-full rounded-md border border-black/15 bg-transparent px-3 py-2 text-sm outline-none focus:border-foreground dark:border-white/20"
-          />
+          <DatePicker id="dueDate" required value={dueDate} onChange={setDueDate} />
         </div>
       </div>
 
@@ -194,7 +188,7 @@ export function OrderForm({
                   required
                   value={line.description}
                   onChange={(e) => updateLine(i, { description: e.target.value })}
-                  className="rounded-md border border-black/15 bg-transparent px-3 py-2 text-sm outline-none focus:border-foreground dark:border-white/20"
+                  className="rounded-md border border-black/15 bg-transparent px-3 py-2 text-sm outline-none focus:border-accent dark:border-white/20"
                 />
                 <input
                   type="number"
@@ -204,7 +198,7 @@ export function OrderForm({
                   required
                   value={line.quantity}
                   onChange={(e) => updateLine(i, { quantity: e.target.value })}
-                  className="rounded-md border border-black/15 bg-transparent px-3 py-2 text-sm outline-none focus:border-foreground dark:border-white/20"
+                  className="rounded-md border border-black/15 bg-transparent px-3 py-2 text-sm outline-none focus:border-accent dark:border-white/20"
                 />
                 <input
                   type="text"
@@ -213,7 +207,7 @@ export function OrderForm({
                   required
                   value={line.unitPrice}
                   onChange={(e) => updateLine(i, { unitPrice: e.target.value })}
-                  className="rounded-md border border-black/15 bg-transparent px-3 py-2 text-sm outline-none focus:border-foreground dark:border-white/20"
+                  className="rounded-md border border-black/15 bg-transparent px-3 py-2 text-sm outline-none focus:border-accent dark:border-white/20"
                 />
                 <button
                   type="button"
