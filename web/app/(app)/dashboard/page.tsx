@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useCallback, useEffect, useState } from 'react';
+import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { api, ApiError } from '@/lib/api';
@@ -21,6 +21,68 @@ function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
+/**
+ * Builds 'YYYY-MM-DD' from the LOCAL y/m/d, never via toISOString() — that goes through UTC,
+ * which rolls the date back a day whenever the browser's timezone is ahead of UTC (local
+ * midnight on the 1st is still "the 31st" in UTC). Same pitfall DatePicker.tsx's own doc
+ * comment calls out for exactly this reason.
+ */
+function toDateInputValue(date: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+/** A short display label for a bare 'YYYY-MM-DD' value — parses the y/m/d directly rather than
+ *  going through `new Date(string)` (which reads it as UTC and risks the same off-by-one-day
+ *  shift as above once `.toLocaleDateString()` converts back to local time for display). */
+function formatDateLabel(value: string): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return value;
+  const [, y, m, d] = match;
+  const date = new Date(Number(y), Number(m) - 1, Number(d), 12); // noon avoids DST edge cases
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+const DUE_DATE_PRESETS: { label: string; range: () => [string, string] }[] = [
+  {
+    label: 'Today',
+    range: () => {
+      const today = toDateInputValue(new Date());
+      return [today, today];
+    },
+  },
+  {
+    label: 'Yesterday',
+    range: () => {
+      const d = new Date();
+      d.setDate(d.getDate() - 1);
+      const value = toDateInputValue(d);
+      return [value, value];
+    },
+  },
+  {
+    label: 'This Month',
+    range: () => {
+      const d = new Date();
+      return [toDateInputValue(new Date(d.getFullYear(), d.getMonth(), 1)), toDateInputValue(new Date(d.getFullYear(), d.getMonth() + 1, 0))];
+    },
+  },
+  {
+    label: 'Past Month',
+    range: () => {
+      const d = new Date();
+      return [toDateInputValue(new Date(d.getFullYear(), d.getMonth() - 1, 1)), toDateInputValue(new Date(d.getFullYear(), d.getMonth(), 0))];
+    },
+  },
+  {
+    label: 'Past 3 Months',
+    range: () => {
+      const d = new Date();
+      return [toDateInputValue(new Date(d.getFullYear(), d.getMonth() - 3, d.getDate())), toDateInputValue(d)];
+    },
+  },
+];
+
 function StatCard({ label, value, tone }: { label: string; value: string; tone?: 'danger' | 'accent' }) {
   return (
     <div className="rounded-xl border border-border-subtle bg-surface px-5 py-4">
@@ -37,46 +99,151 @@ function StatCard({ label, value, tone }: { label: string; value: string; tone?:
 }
 
 /**
- * Defaults to empty — no range means no filtering, the dashboard shows everything, same as
- * before this control existed. Filtering only kicks in once the user picks a complete, valid
- * range, so "download CSV" can never silently produce a header-only file: the same range that
- * drives the download also drives what's on screen, via `disabledReason` from the parent, which
- * is the only place that knows both the range's validity and the actual filtered count.
- *
+ * A dropdown trigger ("Any Date" / the picked range) rather than two always-visible date
+ * fields — opens a popover with From/To pickers, quick presets, and a Clear action. Picking
+ * both ends of a range (in either order, via the fields or a preset) applies immediately and
+ * closes the popover; there's no separate "Apply" step, matching how the rest of this app's
+ * controls act on selection rather than needing confirmation.
+ */
+function DueDateFilterDropdown({
+  from,
+  to,
+  onApplyRange,
+  onClear,
+}: {
+  from: string;
+  to: string;
+  onApplyRange: (from: string, to: string) => void;
+  onClear: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [draftFrom, setDraftFrom] = useState(from);
+  const [draftTo, setDraftTo] = useState(to);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) setOpen(false);
+    }
+    function handleEscape(e: KeyboardEvent) {
+      if (e.key === 'Escape') setOpen(false);
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, []);
+
+  function openPopover() {
+    setDraftFrom(from);
+    setDraftTo(to);
+    setOpen(true);
+  }
+
+  function pick(nextFrom: string, nextTo: string) {
+    setDraftFrom(nextFrom);
+    setDraftTo(nextTo);
+    if (nextFrom && nextTo) {
+      onApplyRange(nextFrom, nextTo);
+      setOpen(false);
+    }
+  }
+
+  function clear() {
+    setDraftFrom('');
+    setDraftTo('');
+    onClear();
+    setOpen(false);
+  }
+
+  const hasFilter = from !== '' && to !== '';
+
+  return (
+    <div className="relative" ref={containerRef}>
+      <button
+        type="button"
+        onClick={() => (open ? setOpen(false) : openPopover())}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        className={`flex items-center gap-2 rounded-lg px-3.5 py-2 text-sm font-medium transition-colors ${
+          hasFilter
+            ? 'bg-accent text-accent-foreground'
+            : 'border border-border-subtle bg-surface text-foreground/70 hover:bg-surface-hover'
+        }`}
+      >
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <rect x="3" y="5" width="18" height="16" rx="2" stroke="currentColor" strokeWidth="1.6" />
+          <path d="M3 9h18M8 3v4M16 3v4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+        </svg>
+        {hasFilter ? `${formatDateLabel(from)} – ${formatDateLabel(to)}` : 'Any Date'}
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true" className={`transition-transform ${open ? 'rotate-180' : ''}`}>
+          <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+
+      {open && (
+        <div
+          role="dialog"
+          aria-label="Filter by due date"
+          className="absolute right-0 z-20 mt-2 w-80 rounded-xl border border-border-subtle bg-background p-4 shadow-lg"
+        >
+          <div className="mb-4 grid grid-cols-2 gap-3">
+            <div className="space-y-1">
+              <label htmlFor="dueDateFrom" className="text-xs font-medium text-foreground/50">
+                From
+              </label>
+              <DatePicker id="dueDateFrom" value={draftFrom} onChange={(value) => pick(value, draftTo)} />
+            </div>
+            <div className="space-y-1">
+              <label htmlFor="dueDateTo" className="text-xs font-medium text-foreground/50">
+                To
+              </label>
+              <DatePicker id="dueDateTo" value={draftTo} onChange={(value) => pick(draftFrom, value)} min={draftFrom} />
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            {DUE_DATE_PRESETS.map((preset) => (
+              <button
+                key={preset.label}
+                type="button"
+                onClick={() => {
+                  const [presetFrom, presetTo] = preset.range();
+                  pick(presetFrom, presetTo);
+                }}
+                className="w-full rounded-lg border border-border-subtle px-3 py-2 text-sm font-medium transition-colors hover:bg-surface-hover"
+              >
+                {preset.label}
+              </button>
+            ))}
+          </div>
+
+          {hasFilter && (
+            <button
+              type="button"
+              onClick={clear}
+              className="mt-3 w-full rounded-lg px-3 py-2 text-sm font-medium text-danger transition-colors hover:bg-surface-hover"
+            >
+              Clear
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
  * The download itself is a plain same-origin <a href>, not a fetch: the response is a CSV file
  * (Content-Disposition: attachment), so the browser downloads it directly rather than the page
  * fetching and parsing it — no blob handling needed, and the session cookie rides along exactly
  * like it would for any other same-origin navigation.
  */
-function ExportCsvControl({
-  from,
-  to,
-  onFromChange,
-  onToChange,
-  disabledReason,
-  exportUrl,
-}: {
-  from: string;
-  to: string;
-  onFromChange: (value: string) => void;
-  onToChange: (value: string) => void;
-  disabledReason: string | undefined;
-  exportUrl: string;
-}) {
+function ExportCsvButton({ disabledReason, exportUrl }: { disabledReason: string | undefined; exportUrl: string }) {
   return (
-    <div className="flex flex-wrap items-end gap-2">
-      <div className="space-y-1">
-        <label htmlFor="exportFrom" className="text-xs font-medium text-foreground/50">
-          Export due date from
-        </label>
-        <DatePicker id="exportFrom" value={from} onChange={onFromChange} />
-      </div>
-      <div className="space-y-1">
-        <label htmlFor="exportTo" className="text-xs font-medium text-foreground/50">
-          to
-        </label>
-        <DatePicker id="exportTo" value={to} onChange={onToChange} min={from} />
-      </div>
+    <>
       {!disabledReason ? (
         <a
           href={exportUrl}
@@ -95,7 +262,7 @@ function ExportCsvControl({
           Export CSV
         </span>
       )}
-    </div>
+    </>
   );
 }
 
@@ -257,14 +424,15 @@ function DashboardContent() {
             </button>
           ))}
         </div>
-        <ExportCsvControl
-          from={exportFrom}
-          to={exportTo}
-          onFromChange={(value) => updateParams({ from: value }, true)}
-          onToChange={(value) => updateParams({ to: value }, true)}
-          disabledReason={exportDisabledReason}
-          exportUrl={exportUrl}
-        />
+        <div className="flex flex-wrap items-center gap-2">
+          <DueDateFilterDropdown
+            from={exportFrom}
+            to={exportTo}
+            onApplyRange={(from, to) => updateParams({ from, to }, true)}
+            onClear={() => updateParams({ from: undefined, to: undefined }, true)}
+          />
+          <ExportCsvButton disabledReason={exportDisabledReason} exportUrl={exportUrl} />
+        </div>
       </div>
 
       {error && (
