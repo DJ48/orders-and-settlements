@@ -6,6 +6,7 @@ import { Session, type SessionDocument } from '../models/Session';
 import { AuditLog, type AuditAction } from '../models/AuditLog';
 import { LoginAttempt } from '../models/LoginAttempt';
 import { ConflictError, UnauthenticatedError } from '../utils/errors';
+import { logger } from '../config/logger';
 
 /**
  * Controllers own HTTP concerns (parsing, cookies, status codes); this module owns the auth
@@ -128,7 +129,7 @@ async function clearLoginAttempts(key: string): Promise<void> {
  * rejection, since nothing downstream is listening for it to reject.
  */
 function background(promise: Promise<unknown>, label: string): void {
-  void promise.catch((err) => console.error(`[auth] background ${label} failed:`, err));
+  void promise.catch((err) => logger.error({ err, label }, 'auth background task failed'));
 }
 
 async function recordAudit(

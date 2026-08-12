@@ -1,6 +1,7 @@
 import { createApp } from './app';
 import { connectDatabase } from './config/database';
 import { env } from './config/env';
+import { logger } from './config/logger';
 
 /**
  * The only place that binds a port. Everything else imports `createApp` so it can be driven
@@ -16,20 +17,20 @@ async function main(): Promise<void> {
   await connectDatabase(env.MONGODB_URI);
 
   const server = createApp().listen(env.PORT, () => {
-    console.log(`API listening on http://localhost:${env.PORT}`);
+    logger.info(`API listening on http://localhost:${env.PORT}`);
   });
 
   // Render (and any container platform) sends SIGTERM before replacing an instance. Closing the
   // server lets in-flight requests finish instead of being cut off mid-payment.
   for (const signal of ['SIGTERM', 'SIGINT'] as const) {
     process.on(signal, () => {
-      console.log(`${signal} received, shutting down`);
+      logger.info(`${signal} received, shutting down`);
       server.close(() => process.exit(0));
     });
   }
 }
 
 main().catch((err) => {
-  console.error('Failed to start server:', err);
+  logger.error({ err }, 'Failed to start server');
   process.exit(1);
 });

@@ -2,9 +2,11 @@ import express, { type Express } from 'express';
 import helmet from 'helmet';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
+import pinoHttp from 'pino-http';
 import routes from './routes';
 import { requestId } from './middlewares/requestId';
 import { errorHandler } from './middlewares/errorHandler';
+import { logger } from './config/logger';
 
 /**
  * Builds the Express app WITHOUT calling listen().
@@ -18,6 +20,21 @@ export function createApp(): Express {
 
   // First in the chain — every request gets an id before anything else can reject it.
   app.use(requestId);
+
+  // Structured request logging. genReqId reuses the id the middleware above just set, rather
+  // than pino-http minting its own — so the same id ties together the response header, the
+  // error envelope, the audit-log entry, and every log line for one request. Health checks are
+  // excluded: an uptime pinger hitting /health every few minutes would otherwise drown out
+  // everything else in the log.
+  app.use(
+    pinoHttp({
+      logger,
+      genReqId: (req) => (req as express.Request).requestId,
+      autoLogging: {
+        ignore: (req) => req.url === '/api/v1/health' || req.url === '/api/v1/ready',
+      },
+    }),
+  );
 
   // Security response headers: HSTS, nosniff, referrer policy, frame options, and it drops
   // the X-Powered-By: Express banner.
