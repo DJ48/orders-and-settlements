@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "bootstrap": "tsx --env-file=.env.local src/scripts/bootstrap.ts",
-    "bootstrap:prod": "node dist/scripts/bootstrap.js"
+    "bootstrap:prod": "node dist/scripts/bootstrap.js",
+    "seed": "tsx --env-file=.env.local src/scripts/seed.ts"
   },
   "keywords": [],
   "author": "",

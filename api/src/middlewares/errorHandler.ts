@@ -21,10 +21,12 @@ export function errorHandler(
     return;
   }
 
-  // Not one of ours — an actual bug. Logged with full detail server-side; the client gets
-  // nothing that could leak internals (stack traces, driver error text). Becomes a structured
-  // pino call in the observability pass (PLAN.md §6) rather than console.error.
-  console.error(`[${req.requestId}] Unhandled error:`, err);
+  // Not one of ours — an actual bug. Logged with full detail server-side via req.log (pino-http's
+  // per-request child logger, already carrying requestId — see app.ts); the client gets nothing
+  // that could leak internals (stack traces, driver error text). `err` as the key name matters:
+  // pino's standard error serializer only formats the stack trace when the property is called
+  // exactly that.
+  req.log.error({ err }, 'Unhandled error');
   res.status(500).json({
     error: {
       code: 'INTERNAL_ERROR',
