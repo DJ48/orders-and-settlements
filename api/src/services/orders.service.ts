@@ -38,53 +38,167 @@ function assertValidId(id: string): void {
 
 export interface ListOrdersOptions {
   status?: OrderStatus;
+  /** Both optional, both already normalised to UTC midnight by the caller — same "both or
+   *  neither" contract as exportOrders. Intersected with whatever dueDate bound `status` itself
+   *  implies (see mergeDueDateBounds), not just appended alongside it. */
+  dueDateFrom?: Date;
+  dueDateTo?: Date;
+  page?: number;
+  pageSize?: number;
+}
+
+export const DEFAULT_PAGE_SIZE = 20;
+export const MAX_PAGE_SIZE = 100;
+
+/**
+ * `statusFilter('pending'|'partially_paid')` already constrains dueDate to `$gte: today`, and
+ * `statusFilter('overdue')` to `$lt: today`. A caller-supplied range touches the same field, so
+ * naively spreading both fragments would let whichever came second silently clobber the other's
+ * bound instead of intersecting it — most dangerously on `$gte`, where both a status and a range
+ * can each supply one. `$lt` and `$lte` never collide (only overdue ever sets `$lt`, only a
+ * range ever sets `$lte`), so those simply coexist as separate keys; only `$gte` needs an
+ * explicit max().
+ */
+function mergeDueDateBounds(
+  statusDueDate: { $lt?: Date; $gte?: Date } | undefined,
+  from: Date | undefined,
+  to: Date | undefined,
+): Record<string, Date> | undefined {
+  const bounds: Record<string, Date> = {};
+
+  if (statusDueDate?.$lt) bounds.$lt = statusDueDate.$lt;
+  if (statusDueDate?.$gte) bounds.$gte = statusDueDate.$gte;
+
+  if (from) bounds.$gte = bounds.$gte && bounds.$gte > from ? bounds.$gte : from;
+  if (to) bounds.$lte = to;
+
+  return Object.keys(bounds).length > 0 ? bounds : undefined;
+}
+
+/**
+ * Shared by listOrders and exportOrders so the two can never quietly diverge on what "the
+ * current filter" means — a status + date-range combination that shows one set of orders on the
+ * dashboard must export exactly that same set, not a looser one.
+ */
+function buildOrderFilter(
+  userId: Types.ObjectId,
+  options: { status?: OrderStatus; dueDateFrom?: Date; dueDateTo?: Date },
+  now: Date = new Date(),
+): Record<string, unknown> {
+  const filter: Record<string, unknown> = { userId, deletedAt: null };
+
+  if (options.status) {
+    const { dueDate: statusDueDate, ...rest } = statusFilter(options.status, now) as {
+      dueDate?: { $lt?: Date; $gte?: Date };
+    } & Record<string, unknown>;
+    Object.assign(filter, rest);
+    const merged = mergeDueDateBounds(statusDueDate, options.dueDateFrom, options.dueDateTo);
+    if (merged) filter.dueDate = merged;
+  } else {
+    const merged = mergeDueDateBounds(undefined, options.dueDateFrom, options.dueDateTo);
+    if (merged) filter.dueDate = merged;
+  }
+
+  return filter;
 }
 
 /**
  * Excludes `lineItems`/`payments` at the QUERY level, not just at response time — that's what
  * makes this an index-covered read rather than pulling every embedded array for every row.
- * Sort tracks whichever compound index the filter uses (see Order.ts): filtered by status,
- * dueDate is the index's trailing field; unfiltered, createdAt is.
+ * Sort tracks whichever compound index the filter uses (see Order.ts): filtered by status or a
+ * date range, dueDate is the index's trailing field; otherwise createdAt is.
+ *
+ * `summary` runs as a second query against the identical filter (not the paginated page) — it's
+ * the only way "Total value" and "Overdue" stay correct once there's more than one page. It
+ * duplicates the overdue *condition* from statusFilter()/deriveStatus() as a Mongo aggregation
+ * expression rather than sharing code with them: it's the same rule expressed in Mongo's query
+ * language instead of JS, for a dashboard summary rather than a single order's authoritative
+ * status, which is still always computed by deriveStatus() per-order in the response layer.
  */
 export async function listOrders(userId: Types.ObjectId, options: ListOrdersOptions = {}) {
-  const filter: Record<string, unknown> = { userId, deletedAt: null };
+  const now = new Date();
+  const filter = buildOrderFilter(userId, options, now);
 
-  if (options.status) {
-    return Order.find({ ...filter, ...statusFilter(options.status) })
+  const page = Math.max(1, options.page ?? 1);
+  const pageSize = Math.min(Math.max(1, options.pageSize ?? DEFAULT_PAGE_SIZE), MAX_PAGE_SIZE);
+  const today = utcDateOnly(now);
+  const sortField: Record<string, 1 | -1> =
+    options.status || options.dueDateFrom || options.dueDateTo ? { dueDate: 1 } : { createdAt: -1 };
+
+  const [orders, summaryRows] = await Promise.all([
+    Order.find(filter)
       .select('-lineItems -payments')
-      .sort({ dueDate: 1 })
-      .limit(500) // a hard safety cap, not real pagination — documented cut for the deadline
-      .lean();
-  }
+      .sort(sortField)
+      .skip((page - 1) * pageSize)
+      .limit(pageSize)
+      .lean(),
+    Order.aggregate([
+      { $match: filter },
+      {
+        $group: {
+          _id: null,
+          count: { $sum: 1 },
+          totalValueCents: { $sum: '$totalCents' },
+          outstandingCents: { $sum: { $max: [0, { $subtract: ['$totalCents', '$amountPaidCents'] }] } },
+          overdueCount: {
+            $sum: {
+              $cond: [
+                { $and: [{ $in: ['$settlementState', ['unpaid', 'partial']] }, { $lt: ['$dueDate', today] }] },
+                1,
+                0,
+              ],
+            },
+          },
+        },
+      },
+    ]),
+  ]);
 
-  return Order.find(filter)
-    .select('-lineItems -payments')
-    .sort({ createdAt: -1 })
-    .limit(500)
-    .lean();
+  const summaryRow = summaryRows[0] as
+    | { count: number; totalValueCents: number; outstandingCents: number; overdueCount: number }
+    | undefined;
+  const total = summaryRow?.count ?? 0;
+
+  return {
+    orders,
+    page,
+    pageSize,
+    total,
+    totalPages: Math.max(1, Math.ceil(total / pageSize)),
+    summary: {
+      totalValueCents: summaryRow?.totalValueCents ?? 0,
+      outstandingCents: summaryRow?.outstandingCents ?? 0,
+      overdueCount: summaryRow?.overdueCount ?? 0,
+    },
+  };
 }
 
 export interface ExportOrdersOptions {
-  /** Both already normalised to UTC midnight by the caller — same convention as dueDate itself. */
-  from: Date;
-  to: Date;
+  status?: OrderStatus;
+  /** Both optional and both already normalised to UTC midnight by the caller. Omitting both
+   *  means no date filter; the controller's validation guarantees they're never supplied one
+   *  without the other. */
+  from?: Date;
+  to?: Date;
 }
 
 /**
- * A range on `dueDate` alone, filtered by the caller-supplied window rather than a status. Kept
- * separate from `listOrders` rather than folded into it — the two don't share a shape (one takes
- * a status, the other a date range) and forcing them into one function's branches would just
- * make both harder to read for no shared behaviour beyond the ownership predicate.
+ * Built from the exact same filter as listOrders (via buildOrderFilter) — a status + date range
+ * that shows one set of orders on the dashboard must export that same set, not a looser one that
+ * ignores the status chip. Unbounded by pagination, unlike the dashboard's page-at-a-time view;
+ * capped at 5,000 as a hard safety limit rather than real pagination, same posture as before.
  */
-export async function exportOrdersInRange(userId: Types.ObjectId, options: ExportOrdersOptions) {
-  return Order.find({
-    userId,
-    deletedAt: null,
-    dueDate: { $gte: options.from, $lte: options.to },
-  })
+export async function exportOrders(userId: Types.ObjectId, options: ExportOrdersOptions = {}) {
+  const filter = buildOrderFilter(userId, {
+    status: options.status,
+    dueDateFrom: options.from,
+    dueDateTo: options.to,
+  });
+
+  return Order.find(filter)
     .select('-lineItems -payments')
     .sort({ dueDate: 1 })
-    .limit(5_000) // generous hard safety cap, not real pagination — same posture as listOrders
+    .limit(5_000)
     .lean();
 }
 

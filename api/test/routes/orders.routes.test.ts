@@ -111,8 +111,8 @@ describe('GET /api/v1/orders', () => {
 
     const res = await request(app).get('/api/v1/orders').set('Cookie', cookieA);
     expect(res.status).toBe(200);
-    expect(res.body).toHaveLength(1);
-    expect(res.body[0].customer).toBe('Mine');
+    expect(res.body.orders).toHaveLength(1);
+    expect(res.body.orders[0].customer).toBe('Mine');
   });
 
   it('list rows omit lineItems and payments', async () => {
@@ -120,8 +120,8 @@ describe('GET /api/v1/orders', () => {
     await request(app).post('/api/v1/orders').set('Cookie', cookie).send({ customer: 'Acme', dueDate: '2026-08-20', lineItems: sampleLineItems() });
 
     const res = await request(app).get('/api/v1/orders').set('Cookie', cookie);
-    expect(res.body[0].lineItems).toBeUndefined();
-    expect(res.body[0].payments).toBeUndefined();
+    expect(res.body.orders[0].lineItems).toBeUndefined();
+    expect(res.body.orders[0].payments).toBeUndefined();
   });
 
   it('filters by status', async () => {
@@ -131,13 +131,54 @@ describe('GET /api/v1/orders', () => {
     const pending = await request(app).get('/api/v1/orders?status=pending').set('Cookie', cookie);
     const paid = await request(app).get('/api/v1/orders?status=paid').set('Cookie', cookie);
 
-    expect(pending.body).toHaveLength(1);
-    expect(paid.body).toHaveLength(0);
+    expect(pending.body.orders).toHaveLength(1);
+    expect(paid.body.orders).toHaveLength(0);
   });
 
   it('rejects an invalid status value', async () => {
     const cookie = await signupAndLogin('i@example.com');
     const res = await request(app).get('/api/v1/orders?status=not-a-real-status').set('Cookie', cookie);
+    expect(res.status).toBe(400);
+  });
+
+  it('paginates with page/pageSize and reports total/totalPages', async () => {
+    const cookie = await signupAndLogin('j-pagination@example.com');
+    for (let i = 0; i < 3; i++) {
+      await request(app).post('/api/v1/orders').set('Cookie', cookie).send({ customer: `Order ${i}`, dueDate: '2026-08-20', lineItems: sampleLineItems() });
+    }
+
+    const res = await request(app).get('/api/v1/orders?page=1&pageSize=2').set('Cookie', cookie);
+    expect(res.status).toBe(200);
+    expect(res.body.orders).toHaveLength(2);
+    expect(res.body.page).toBe(1);
+    expect(res.body.pageSize).toBe(2);
+    expect(res.body.total).toBe(3);
+    expect(res.body.totalPages).toBe(2);
+  });
+
+  it('summary totals cover every matching order, not just the current page', async () => {
+    const cookie = await signupAndLogin('k-summary@example.com');
+    await request(app).post('/api/v1/orders').set('Cookie', cookie).send({ customer: 'One', dueDate: '2026-08-20', lineItems: sampleLineItems() });
+    await request(app).post('/api/v1/orders').set('Cookie', cookie).send({ customer: 'Two', dueDate: '2026-08-20', lineItems: sampleLineItems() });
+
+    const res = await request(app).get('/api/v1/orders?page=1&pageSize=1').set('Cookie', cookie);
+    expect(res.body.orders).toHaveLength(1);
+    expect(res.body.summary.totalValueCents).toBe(200_000);
+  });
+
+  it('filters by an inclusive due-date range', async () => {
+    const cookie = await signupAndLogin('l-range@example.com');
+    await request(app).post('/api/v1/orders').set('Cookie', cookie).send({ customer: 'In range', dueDate: '2026-06-15', lineItems: sampleLineItems() });
+    await request(app).post('/api/v1/orders').set('Cookie', cookie).send({ customer: 'Out of range', dueDate: '2026-01-01', lineItems: sampleLineItems() });
+
+    const res = await request(app).get('/api/v1/orders?from=2026-06-01&to=2026-06-30').set('Cookie', cookie);
+    expect(res.body.orders).toHaveLength(1);
+    expect(res.body.orders[0].customer).toBe('In range');
+  });
+
+  it('rejects a lone "from" without a matching "to"', async () => {
+    const cookie = await signupAndLogin('m-range@example.com');
+    const res = await request(app).get('/api/v1/orders?from=2026-01-01').set('Cookie', cookie);
     expect(res.status).toBe(400);
   });
 });
@@ -183,6 +224,25 @@ describe('GET /api/v1/orders/export', () => {
     expect(lines).toHaveLength(3); // header + both boundary orders
   });
 
+  it('combines a status filter with the date range — export matches what the same filter would list', async () => {
+    const cookie = await signupAndLogin('export-status-combo@example.com');
+    // Both due dates must be in the future relative to "now" for the unpaid one to actually
+    // derive as 'pending' rather than 'overdue'.
+    const paidId = (
+      await request(app).post('/api/v1/orders').set('Cookie', cookie).send({ customer: 'Paid In Range', dueDate: '2026-09-10', lineItems: sampleLineItems() })
+    ).body._id;
+    await request(app).post('/api/v1/orders').set('Cookie', cookie).send({ customer: 'Pending In Range', dueDate: '2026-09-20', lineItems: sampleLineItems() });
+    await request(app)
+      .post(`/api/v1/orders/${paidId}/payments`)
+      .set('Cookie', cookie)
+      .send({ amountCents: 100_000, paidOn: '2026-08-01', idempotencyKey: 'combo-1' });
+
+    const res = await request(app).get('/api/v1/orders/export?status=pending&from=2026-09-01&to=2026-09-30').set('Cookie', cookie);
+    const lines = res.text.trim().split('\r\n');
+    expect(lines).toHaveLength(2); // header + only the pending one, not the paid one
+    expect(lines[1]).toContain('Pending In Range');
+  });
+
   it("only exports the caller's own orders", async () => {
     const owner = await signupAndLogin('export-owner@example.com');
     const other = await signupAndLogin('export-other@example.com');
@@ -223,10 +283,24 @@ describe('GET /api/v1/orders/export', () => {
     expect(res.body.error.code).toBe('VALIDATION_ERROR');
   });
 
-  it('requires both from and to', async () => {
+  it('rejects a lone "from" without a matching "to"', async () => {
     const cookie = await signupAndLogin('export-e@example.com');
     const res = await request(app).get('/api/v1/orders/export?from=2026-01-01').set('Cookie', cookie);
     expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('VALIDATION_ERROR');
+  });
+
+  it('exports every order when no range is given at all', async () => {
+    const cookie = await signupAndLogin('export-f@example.com');
+    await request(app).post('/api/v1/orders').set('Cookie', cookie).send({ customer: 'Early', dueDate: '2026-01-01', lineItems: sampleLineItems() });
+    await request(app).post('/api/v1/orders').set('Cookie', cookie).send({ customer: 'Late', dueDate: '2026-12-31', lineItems: sampleLineItems() });
+
+    const res = await request(app).get('/api/v1/orders/export').set('Cookie', cookie);
+
+    expect(res.status).toBe(200);
+    expect(res.headers['content-disposition']).toContain('orders_all.csv');
+    const lines = res.text.trim().split('\r\n');
+    expect(lines).toHaveLength(3); // header + both orders, no date filter applied
   });
 });
 

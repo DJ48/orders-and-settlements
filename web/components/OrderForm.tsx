@@ -140,7 +140,7 @@ export function OrderForm({
     <form onSubmit={handleSubmit} className="space-y-6">
       {nothingEditable && (
         <p className="rounded-lg border border-black/10 bg-black/5 px-3 py-2 text-sm text-black/60 dark:border-white/10 dark:bg-white/5 dark:text-white/60">
-          This order is locked because it's been paid in full or gone overdue — nothing below can be edited.
+          This order is locked because it&apos;s been paid in full or gone overdue — nothing below can be edited.
         </p>
       )}
 
