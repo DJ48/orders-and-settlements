@@ -47,6 +47,24 @@ export interface Order {
 /** The dashboard list omits lineItems/payments — see the ESR-ordered index in PLAN.md §2. */
 export type OrderSummary = Omit<Order, 'lineItems' | 'payments'>;
 
+/**
+ * `summary` is aggregated over every order matching the current filter, not just the page in
+ * `orders` — computing "Total value" from only the loaded page would silently understate it the
+ * moment there's more than one page.
+ */
+export interface PagedOrders {
+  orders: OrderSummary[];
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+  summary: {
+    totalValueCents: number;
+    outstandingCents: number;
+    overdueCount: number;
+  };
+}
+
 export interface User {
   _id: string;
   email: string;

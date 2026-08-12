@@ -1,6 +1,6 @@
 import type {
   Order,
-  OrderSummary,
+  PagedOrders,
   OrderStatus,
   CreateOrderInput,
   UpdateOrderInput,
@@ -68,8 +68,16 @@ export const api = {
 
   me: () => request<User>('/auth/me'),
 
-  listOrders: (status?: OrderStatus) =>
-    request<OrderSummary[]>(`/orders${status ? `?status=${status}` : ''}`),
+  listOrders: (options: { status?: OrderStatus; from?: string; to?: string; page?: number; pageSize?: number } = {}) => {
+    const params = new URLSearchParams();
+    if (options.status) params.set('status', options.status);
+    if (options.from) params.set('from', options.from);
+    if (options.to) params.set('to', options.to);
+    if (options.page) params.set('page', String(options.page));
+    if (options.pageSize) params.set('pageSize', String(options.pageSize));
+    const query = params.toString();
+    return request<PagedOrders>(`/orders${query ? `?${query}` : ''}`);
+  },
 
   getOrder: (id: string) => request<Order>(`/orders/${id}`),
 
@@ -89,7 +97,15 @@ export const api = {
 
   // Not routed through request() — the response is a CSV file, not JSON, and the browser
   // downloads it directly (Content-Disposition: attachment) rather than the page fetching and
-  // parsing it. A plain same-origin URL for an <a href> to point at.
-  orderExportUrl: (from: string, to: string) =>
-    `/api/v1/orders/export?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
+  // parsing it. A plain same-origin URL for an <a href> to point at. All params optional —
+  // omitting them exports every order, matching the API's own contract. `status` is included so
+  // the export always matches whatever the dashboard's status filter is currently showing.
+  orderExportUrl: (options: { status?: OrderStatus; from?: string; to?: string } = {}) => {
+    const params = new URLSearchParams();
+    if (options.status) params.set('status', options.status);
+    if (options.from) params.set('from', options.from);
+    if (options.to) params.set('to', options.to);
+    const query = params.toString();
+    return `/api/v1/orders/export${query ? `?${query}` : ''}`;
+  },
 };

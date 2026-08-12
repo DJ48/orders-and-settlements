@@ -106,16 +106,16 @@ describe('listOrders', () => {
     await createOrder(owner._id, { customer: 'Mine', dueDate: '2026-08-20', lineItems: sampleLineItems() });
     await createOrder(other._id, { customer: 'Theirs', dueDate: '2026-08-20', lineItems: sampleLineItems() });
 
-    const results = await listOrders(owner._id);
-    expect(results).toHaveLength(1);
-    expect(results[0]?.customer).toBe('Mine');
+    const { orders } = await listOrders(owner._id);
+    expect(orders).toHaveLength(1);
+    expect(orders[0]?.customer).toBe('Mine');
   });
 
   it('excludes lineItems and payments from the list — the covered-index read', async () => {
     const user = await makeUser('h@example.com');
     await createOrder(user._id, { customer: 'Acme', dueDate: '2026-08-20', lineItems: sampleLineItems() });
 
-    const [result] = await listOrders(user._id);
+    const { orders: [result] } = await listOrders(user._id);
     expect(result).not.toHaveProperty('lineItems');
     expect(result).not.toHaveProperty('payments');
   });
@@ -140,8 +140,53 @@ describe('listOrders', () => {
     const pending = await listOrders(user._id, { status: 'pending' });
     const paid = await listOrders(user._id, { status: 'paid' });
 
-    expect(pending).toHaveLength(1);
-    expect(paid).toHaveLength(0);
+    expect(pending.orders).toHaveLength(1);
+    expect(paid.orders).toHaveLength(0);
+  });
+
+  it('paginates: page 2 of a 2-per-page list returns the next slice, correctly ordered', async () => {
+    const user = await makeUser('pagination@example.com');
+    await createOrder(user._id, { customer: 'A', dueDate: '2026-08-01', lineItems: sampleLineItems() });
+    await createOrder(user._id, { customer: 'B', dueDate: '2026-08-02', lineItems: sampleLineItems() });
+    await createOrder(user._id, { customer: 'C', dueDate: '2026-08-03', lineItems: sampleLineItems() });
+
+    const page1 = await listOrders(user._id, { page: 1, pageSize: 2 });
+    const page2 = await listOrders(user._id, { page: 2, pageSize: 2 });
+
+    expect(page1.orders).toHaveLength(2);
+    expect(page2.orders).toHaveLength(1);
+    expect(page1.total).toBe(3);
+    expect(page1.totalPages).toBe(2);
+    // Unfiltered list sorts by createdAt DESC (newest first): C, B, A. Page 1 = [C, B], page 2 = [A].
+    expect(page1.orders.map((o) => o.customer)).toEqual(['C', 'B']);
+    expect(page2.orders[0]?.customer).toBe('A');
+  });
+
+  it('summary reflects every matching order, not just the current page', async () => {
+    const user = await makeUser('summary@example.com');
+    for (let i = 0; i < 3; i++) {
+      await createOrder(user._id, { customer: `Order ${i}`, dueDate: '2026-08-20', lineItems: sampleLineItems() });
+    }
+
+    const { summary, orders } = await listOrders(user._id, { page: 1, pageSize: 1 });
+    expect(orders).toHaveLength(1); // only one order on this page...
+    expect(summary.totalValueCents).toBe(300_000); // ...but the summary covers all three
+  });
+
+  it('intersects a due-date range with a status filter instead of one silently overriding the other', async () => {
+    const user = await makeUser('range-status@example.com');
+    // Overdue: due in the past, unpaid.
+    await createOrder(user._id, { customer: 'Overdue in range', dueDate: '2020-01-15', lineItems: sampleLineItems() });
+    await createOrder(user._id, { customer: 'Overdue out of range', dueDate: '2020-06-15', lineItems: sampleLineItems() });
+
+    const result = await listOrders(user._id, {
+      status: 'overdue',
+      dueDateFrom: new Date('2020-01-01'),
+      dueDateTo: new Date('2020-02-01'),
+    });
+
+    expect(result.orders).toHaveLength(1);
+    expect(result.orders[0]?.customer).toBe('Overdue in range');
   });
 });
 

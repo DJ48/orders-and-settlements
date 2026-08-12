@@ -31,18 +31,49 @@ const UpdateOrderSchema = z.object({
   lineItems: z.array(LineItemInputSchema).min(1, 'An order needs at least one line item').optional(),
 });
 
-const ListOrdersQuerySchema = z.object({
-  status: z.enum(ORDER_STATUSES).optional(),
-});
+/**
+ * Both from/to optional on both schemas below — omitting both means no date filter, matching how
+ * ?status= itself is optional. What's not allowed is exactly one: a range needs two ends, and a
+ * lone bound would be ambiguous (from-only reads like "since X", which nothing here promises).
+ * The two schemas repeat this shape rather than sharing a generic builder — zod's `.refine()`
+ * typing doesn't infer cleanly through a generic wrapper, and the two definitions are short
+ * enough that the duplication is cheaper than fighting the type checker over it.
+ */
+const ListOrdersQuerySchema = z
+  .object({
+    status: z.enum(ORDER_STATUSES).optional(),
+    from: z.string().date('Enter a valid "from" date (YYYY-MM-DD)').optional(),
+    to: z.string().date('Enter a valid "to" date (YYYY-MM-DD)').optional(),
+    page: z.coerce.number().int('Page must be a whole number').min(1, 'Page must be at least 1').optional(),
+    pageSize: z.coerce
+      .number()
+      .int('Page size must be a whole number')
+      .min(1, 'Page size must be at least 1')
+      .max(ordersService.MAX_PAGE_SIZE, `Page size cannot exceed ${ordersService.MAX_PAGE_SIZE}`)
+      .optional(),
+  })
+  .refine((query) => (query.from === undefined) === (query.to === undefined), {
+    message: 'Provide both "from" and "to", or neither',
+    path: ['from'],
+  })
+  .refine((query) => query.from === undefined || query.to === undefined || query.from <= query.to, {
+    // Plain string comparison is safe here — both are already zod-validated YYYY-MM-DD, and
+    // that format sorts lexicographically the same as chronologically.
+    message: '"from" must be on or before "to"',
+    path: ['from'],
+  });
 
 const ExportOrdersQuerySchema = z
   .object({
-    from: z.string().date('Enter a valid "from" date (YYYY-MM-DD)'),
-    to: z.string().date('Enter a valid "to" date (YYYY-MM-DD)'),
+    status: z.enum(ORDER_STATUSES).optional(),
+    from: z.string().date('Enter a valid "from" date (YYYY-MM-DD)').optional(),
+    to: z.string().date('Enter a valid "to" date (YYYY-MM-DD)').optional(),
   })
-  .refine((query) => query.from <= query.to, {
-    // Plain string comparison is safe here — both are already zod-validated YYYY-MM-DD, and
-    // that format sorts lexicographically the same as chronologically.
+  .refine((query) => (query.from === undefined) === (query.to === undefined), {
+    message: 'Provide both "from" and "to", or neither',
+    path: ['from'],
+  })
+  .refine((query) => query.from === undefined || query.to === undefined || query.from <= query.to, {
     message: '"from" must be on or before "to"',
     path: ['from'],
   });
@@ -59,19 +90,35 @@ function requestContext(req: Request): ordersService.RequestContext {
 
 export async function getOrders(req: Request, res: Response): Promise<void> {
   const query = parse(ListOrdersQuerySchema, req.query);
-  const orders = await ordersService.listOrders(req.user!.id, { status: query.status });
-  res.json(orders.map(toOrderSummaryResponse));
+  const result = await ordersService.listOrders(req.user!.id, {
+    status: query.status,
+    dueDateFrom: query.from ? utcDateOnly(new Date(query.from)) : undefined,
+    dueDateTo: query.to ? utcDateOnly(new Date(query.to)) : undefined,
+    page: query.page,
+    pageSize: query.pageSize,
+  });
+
+  res.json({
+    orders: result.orders.map(toOrderSummaryResponse),
+    page: result.page,
+    pageSize: result.pageSize,
+    total: result.total,
+    totalPages: result.totalPages,
+    summary: result.summary,
+  });
 }
 
 export async function getOrdersExport(req: Request, res: Response): Promise<void> {
   const query = parse(ExportOrdersQuerySchema, req.query);
-  const orders = await ordersService.exportOrdersInRange(req.user!.id, {
-    from: utcDateOnly(new Date(query.from)),
-    to: utcDateOnly(new Date(query.to)),
+  const orders = await ordersService.exportOrders(req.user!.id, {
+    status: query.status,
+    from: query.from ? utcDateOnly(new Date(query.from)) : undefined,
+    to: query.to ? utcDateOnly(new Date(query.to)) : undefined,
   });
 
+  const filenameSuffix = query.from && query.to ? `_${query.from}_to_${query.to}` : '_all';
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-  res.setHeader('Content-Disposition', `attachment; filename="orders_${query.from}_to_${query.to}.csv"`);
+  res.setHeader('Content-Disposition', `attachment; filename="orders${filenameSuffix}.csv"`);
   res.status(200).send(toOrdersCsv(orders));
 }
 
