@@ -40,11 +40,18 @@ const AuditLogSchema = new Schema({
     userAgent: { type: String, maxlength: 400 },
   },
 
-  /** After-state only — copying whole documents would balloon this collection. */
+  /**
+   * After-state only — copying whole documents would balloon this collection.
+   *
+   * `dueDate` is here so an entry's status can be re-derived exactly as it stood at the time.
+   * Status is computed from money AND the due date, so a snapshot carrying only the money axis
+   * can't answer "what was this order's status when this happened" once the due date has moved.
+   */
   snapshot: {
     totalCents: { type: Number },
     amountPaidCents: { type: Number },
     settlementState: { type: String },
+    dueDate: { type: Date },
   },
 
   /**

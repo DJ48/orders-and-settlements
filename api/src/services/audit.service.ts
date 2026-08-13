@@ -14,7 +14,7 @@ export async function recordAudit(
     userId: Types.ObjectId;
     orderId: Types.ObjectId;
     context?: RequestContext;
-    snapshot?: { totalCents: number; amountPaidCents: number; settlementState: string };
+    snapshot?: { totalCents: number; amountPaidCents: number; settlementState: string; dueDate: Date };
     delta?: Record<string, unknown>;
   },
 ): Promise<void> {
@@ -50,5 +50,6 @@ export function snapshotOf(order: OrderDocument) {
     totalCents: order.totalCents,
     amountPaidCents: order.amountPaidCents,
     settlementState: order.settlementState,
+    dueDate: order.dueDate,
   };
 }

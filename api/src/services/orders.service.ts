@@ -258,6 +258,16 @@ export async function updateOrder(
   const order = await getOrder(userId, orderId);
   let changed = false;
 
+  // Captured before any mutation. Recording only the incoming patch would store what a field
+  // BECAME but never what it WAS, which makes the trail unable to answer the one question an
+  // audit trail exists for: what changed. Cheap to keep — three scalars and the item count.
+  const before = {
+    customer: order.customer,
+    dueDate: order.dueDate,
+    totalCents: order.totalCents,
+    lineItemCount: order.lineItems.length,
+  };
+
   // Line items lock the moment any money exists against this specific total — the lock lives
   // on the scalar (amountPaidCents), not the array, so this never needs to load `payments` and
   // can't disagree with it, since both change atomically together.
@@ -314,12 +324,28 @@ export async function updateOrder(
     throw err;
   }
 
+  // Only fields that actually moved. A patch can name a field and set it to what it already was;
+  // recording that as a change would put a row on the timeline saying nothing happened.
+  const changes: Record<string, { from: unknown; to: unknown }> = {};
+  if (before.customer !== order.customer) {
+    changes.customer = { from: before.customer, to: order.customer };
+  }
+  if (before.dueDate.getTime() !== order.dueDate.getTime()) {
+    changes.dueDate = { from: before.dueDate.toISOString(), to: order.dueDate.toISOString() };
+  }
+  if (before.totalCents !== order.totalCents || before.lineItemCount !== order.lineItems.length) {
+    changes.lineItems = {
+      from: { count: before.lineItemCount, totalCents: before.totalCents },
+      to: { count: order.lineItems.length, totalCents: order.totalCents },
+    };
+  }
+
   await recordAudit('order.updated', {
     userId,
     orderId: order._id,
     context,
     snapshot: snapshotOf(order),
-    delta: patch as Record<string, unknown>,
+    delta: { changes },
   });
 
   return order;

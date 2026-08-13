@@ -92,6 +92,8 @@ export interface AuditEntry {
   action: AuditAction;
   at: string; // ISO timestamp
   requestId?: string;
+  /** The order's status immediately after this event, derived server-side as of that moment. */
+  status?: OrderStatus;
   snapshot?: { totalCents?: number; amountPaidCents?: number; settlementState?: string };
   delta?: Record<string, unknown>;
 }

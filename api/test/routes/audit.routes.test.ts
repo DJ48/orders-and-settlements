@@ -103,6 +103,83 @@ describe('GET /api/v1/orders/:id/audit', () => {
     }
   });
 
+  it('records what an edited field changed FROM, not just what it became', async () => {
+    const cookie = await signupAndLogin('d@example.com');
+    const orderId = await createSampleOrder(cookie);
+
+    await request(app)
+      .patch(`/api/v1/orders/${orderId}`)
+      .set('Cookie', cookie)
+      .send({ customer: 'Globex Corp', dueDate: '2026-09-30' });
+
+    const res = await request(app).get(`/api/v1/orders/${orderId}/audit`).set('Cookie', cookie);
+    const updated = res.body.entries.find((e: { action: string }) => e.action === 'order.updated');
+
+    expect(updated.delta.changes.customer).toEqual({ from: 'Acme Corp', to: 'Globex Corp' });
+    expect(updated.delta.changes.dueDate.from).toContain('2026-08-20');
+    expect(updated.delta.changes.dueDate.to).toContain('2026-09-30');
+  });
+
+  it('reports a line-item edit as a count and total on each side', async () => {
+    const cookie = await signupAndLogin('e@example.com');
+    const orderId = await createSampleOrder(cookie);
+
+    await request(app)
+      .patch(`/api/v1/orders/${orderId}`)
+      .set('Cookie', cookie)
+      .send({
+        lineItems: [
+          { description: 'Widget', quantity: 2, unitPriceCents: 50_000 },
+          { description: 'Support', quantity: 1, unitPriceCents: 25_000 },
+        ],
+      });
+
+    const res = await request(app).get(`/api/v1/orders/${orderId}/audit`).set('Cookie', cookie);
+    const updated = res.body.entries.find((e: { action: string }) => e.action === 'order.updated');
+
+    expect(updated.delta.changes.lineItems).toEqual({
+      from: { count: 1, totalCents: 100_000 },
+      to: { count: 2, totalCents: 125_000 },
+    });
+  });
+
+  it('omits fields the patch named but did not actually change', async () => {
+    const cookie = await signupAndLogin('f@example.com');
+    const orderId = await createSampleOrder(cookie);
+
+    // Same customer it already has, alongside a due date that genuinely moves.
+    await request(app)
+      .patch(`/api/v1/orders/${orderId}`)
+      .set('Cookie', cookie)
+      .send({ customer: 'Acme Corp', dueDate: '2026-09-30' });
+
+    const res = await request(app).get(`/api/v1/orders/${orderId}/audit`).set('Cookie', cookie);
+    const updated = res.body.entries.find((e: { action: string }) => e.action === 'order.updated');
+
+    expect(updated.delta.changes).not.toHaveProperty('customer');
+    expect(updated.delta.changes).toHaveProperty('dueDate');
+  });
+
+  it('carries the status as it stood at each event, not as it stands today', async () => {
+    const cookie = await signupAndLogin('g@example.com');
+    const orderId = await createSampleOrder(cookie);
+
+    await request(app)
+      .post(`/api/v1/orders/${orderId}/payments`)
+      .set('Cookie', cookie)
+      .send({ amountCents: 40_000, paidOn: '2026-08-01', idempotencyKey: 'k3' });
+    await request(app)
+      .post(`/api/v1/orders/${orderId}/payments`)
+      .set('Cookie', cookie)
+      .send({ amountCents: 60_000, paidOn: '2026-08-02', idempotencyKey: 'k4' });
+
+    const res = await request(app).get(`/api/v1/orders/${orderId}/audit`).set('Cookie', cookie);
+    const statuses = res.body.entries.map((e: { status: string }) => e.status);
+
+    // Newest first: settled, then partway there, then nothing paid at all.
+    expect(statuses).toEqual(['paid', 'partially_paid', 'pending']);
+  });
+
   it("404s on someone else's order rather than returning an empty trail", async () => {
     const owner = await signupAndLogin('owner@example.com');
     const orderId = await createSampleOrder(owner);
