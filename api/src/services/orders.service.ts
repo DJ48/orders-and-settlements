@@ -249,6 +249,18 @@ export interface UpdateOrderInput {
   lineItems?: LineItemInput[];
 }
 
+/**
+ * The comparable shape of an order's items — `lineTotalCents` is omitted because it's derived
+ * from quantity × unitPrice, so including it would just double-count a change already visible.
+ */
+function lineItemsFor(order: OrderDocument) {
+  return order.lineItems.map((item) => ({
+    description: item.description,
+    quantity: item.quantity,
+    unitPriceCents: item.unitPriceCents,
+  }));
+}
+
 export async function updateOrder(
   userId: Types.ObjectId,
   orderId: string,
@@ -265,7 +277,7 @@ export async function updateOrder(
     customer: order.customer,
     dueDate: order.dueDate,
     totalCents: order.totalCents,
-    lineItemCount: order.lineItems.length,
+    lineItems: lineItemsFor(order),
   };
 
   // Line items lock the moment any money exists against this specific total — the lock lives
@@ -333,10 +345,14 @@ export async function updateOrder(
   if (before.dueDate.getTime() !== order.dueDate.getTime()) {
     changes.dueDate = { from: before.dueDate.toISOString(), to: order.dueDate.toISOString() };
   }
-  if (before.totalCents !== order.totalCents || before.lineItemCount !== order.lineItems.length) {
+  // Compared by content, not by count and total: renaming an item or swapping quantity against
+  // unit price for the same money leaves both of those identical while the order genuinely
+  // changed, which previously produced an "Order updated" row that couldn't say what moved.
+  const afterItems = lineItemsFor(order);
+  if (JSON.stringify(before.lineItems) !== JSON.stringify(afterItems)) {
     changes.lineItems = {
-      from: { count: before.lineItemCount, totalCents: before.totalCents },
-      to: { count: order.lineItems.length, totalCents: order.totalCents },
+      from: { count: before.lineItems.length, totalCents: before.totalCents, items: before.lineItems },
+      to: { count: afterItems.length, totalCents: order.totalCents, items: afterItems },
     };
   }
 

@@ -120,6 +120,50 @@ describe('GET /api/v1/orders/:id/audit', () => {
     expect(updated.delta.changes.dueDate.to).toContain('2026-09-30');
   });
 
+  it('records a line-item edit that leaves the count and total untouched', async () => {
+    const cookie = await signupAndLogin('h@example.com');
+    const orderId = await createSampleOrder(cookie);
+
+    // Description only. Count stays 1 and the total stays $1,000 — comparing just those two
+    // would see nothing, leaving an "Order updated" row that can't say what changed.
+    await request(app)
+      .patch(`/api/v1/orders/${orderId}`)
+      .set('Cookie', cookie)
+      .send({ lineItems: [{ description: 'Widget Pro', quantity: 2, unitPriceCents: 50_000 }] });
+
+    const res = await request(app).get(`/api/v1/orders/${orderId}/audit`).set('Cookie', cookie);
+    const updated = res.body.entries.find((e: { action: string }) => e.action === 'order.updated');
+
+    expect(updated.delta.changes.lineItems.from.items).toEqual([
+      { description: 'Widget', quantity: 2, unitPriceCents: 50_000 },
+    ]);
+    expect(updated.delta.changes.lineItems.to.items).toEqual([
+      { description: 'Widget Pro', quantity: 2, unitPriceCents: 50_000 },
+    ]);
+    expect(updated.delta.changes.lineItems.to.totalCents).toBe(100_000); // unchanged
+  });
+
+  it('records a quantity/price swap that keeps the same total', async () => {
+    const cookie = await signupAndLogin('i@example.com');
+    const orderId = await createSampleOrder(cookie);
+
+    // 2 × $500 becomes 4 × $250 — same $1,000, same one row, genuinely different order.
+    await request(app)
+      .patch(`/api/v1/orders/${orderId}`)
+      .set('Cookie', cookie)
+      .send({ lineItems: [{ description: 'Widget', quantity: 4, unitPriceCents: 25_000 }] });
+
+    const res = await request(app).get(`/api/v1/orders/${orderId}/audit`).set('Cookie', cookie);
+    const updated = res.body.entries.find((e: { action: string }) => e.action === 'order.updated');
+
+    expect(updated.delta.changes).toHaveProperty('lineItems');
+    expect(updated.delta.changes.lineItems.to.items[0]).toEqual({
+      description: 'Widget',
+      quantity: 4,
+      unitPriceCents: 25_000,
+    });
+  });
+
   it('reports a line-item edit as a count and total on each side', async () => {
     const cookie = await signupAndLogin('e@example.com');
     const orderId = await createSampleOrder(cookie);
@@ -138,8 +182,19 @@ describe('GET /api/v1/orders/:id/audit', () => {
     const updated = res.body.entries.find((e: { action: string }) => e.action === 'order.updated');
 
     expect(updated.delta.changes.lineItems).toEqual({
-      from: { count: 1, totalCents: 100_000 },
-      to: { count: 2, totalCents: 125_000 },
+      from: {
+        count: 1,
+        totalCents: 100_000,
+        items: [{ description: 'Widget', quantity: 2, unitPriceCents: 50_000 }],
+      },
+      to: {
+        count: 2,
+        totalCents: 125_000,
+        items: [
+          { description: 'Widget', quantity: 2, unitPriceCents: 50_000 },
+          { description: 'Support', quantity: 1, unitPriceCents: 25_000 },
+        ],
+      },
     });
   });
 

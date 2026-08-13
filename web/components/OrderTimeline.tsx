@@ -64,11 +64,78 @@ function changesOf(entry: AuditEntry): Record<string, FieldChange> {
   return raw && typeof raw === 'object' ? (raw as Record<string, FieldChange>) : {};
 }
 
-/** `{ count, totalCents }` on either side of a line-item edit. */
-function lineItemSide(value: unknown): { count: number; totalCents: number } | null {
+interface LineItemShape {
+  description: string;
+  quantity: number;
+  unitPriceCents: number;
+}
+
+interface LineItemSide {
+  count: number;
+  totalCents: number;
+  items: LineItemShape[];
+}
+
+/** `{ count, totalCents, items }` on either side of a line-item edit. */
+function lineItemSide(value: unknown): LineItemSide | null {
   if (!value || typeof value !== 'object') return null;
-  const { count, totalCents } = value as { count?: unknown; totalCents?: unknown };
-  return typeof count === 'number' && typeof totalCents === 'number' ? { count, totalCents } : null;
+  const { count, totalCents, items } = value as { count?: unknown; totalCents?: unknown; items?: unknown };
+  if (typeof count !== 'number' || typeof totalCents !== 'number') return null;
+  return { count, totalCents, items: Array.isArray(items) ? (items as LineItemShape[]) : [] };
+}
+
+function describeItem(item: LineItemShape) {
+  return `${item.description} — ${item.quantity} × ${formatCentsAsCurrency(item.unitPriceCents)}`;
+}
+
+/**
+ * Items are compared position-by-position because an edit replaces the whole array, so the
+ * subdocument ids are freshly minted and can't be used to pair old with new. Position is what
+ * survives, and it matches how the edit form presents the rows.
+ *
+ * Entries recorded before `items` was captured carry only a count and a total; those fall back to
+ * the summary line rather than claiming to know which row moved.
+ */
+function describeLineItems(from: LineItemSide, to: LineItemSide): string[] {
+  if (from.items.length === 0 && to.items.length === 0) {
+    const delta = to.count - from.count;
+    const verb =
+      delta > 0
+        ? `${delta} item${delta === 1 ? '' : 's'} added`
+        : delta < 0
+          ? `${-delta} item${delta === -1 ? '' : 's'} removed`
+          : 'Items edited';
+    return [`${verb} — total ${formatCentsAsCurrency(from.totalCents)} → ${formatCentsAsCurrency(to.totalCents)}`];
+  }
+
+  const lines: string[] = [];
+
+  for (let i = 0; i < Math.max(from.items.length, to.items.length); i++) {
+    const old = from.items[i];
+    const now = to.items[i];
+
+    if (!old && now) {
+      lines.push(`Added ${describeItem(now)}`);
+    } else if (old && !now) {
+      lines.push(`Removed ${describeItem(old)}`);
+    } else if (old && now) {
+      const name = now.description;
+      if (old.description !== now.description) lines.push(`Renamed "${old.description}" → "${now.description}"`);
+      if (old.quantity !== now.quantity) lines.push(`${name}: qty ${old.quantity} → ${now.quantity}`);
+      if (old.unitPriceCents !== now.unitPriceCents) {
+        lines.push(
+          `${name}: unit price ${formatCentsAsCurrency(old.unitPriceCents)} → ${formatCentsAsCurrency(now.unitPriceCents)}`,
+        );
+      }
+    }
+  }
+
+  if (from.totalCents !== to.totalCents) {
+    lines.push(`Order total: ${formatCentsAsCurrency(from.totalCents)} → ${formatCentsAsCurrency(to.totalCents)}`);
+  }
+
+  // Content changed in a way none of the above named — better a vague line than a silent row.
+  return lines.length > 0 ? lines : ['Line items edited'];
 }
 
 /**
@@ -123,16 +190,13 @@ function describeChanges(entry: AuditEntry): string[] {
   if (items) {
     const from = lineItemSide(items.from);
     const to = lineItemSide(items.to);
-    if (from && to) {
-      const delta = to.count - from.count;
-      const verb = delta > 0 ? `${delta} item${delta === 1 ? '' : 's'} added` : delta < 0 ? `${-delta} item${delta === -1 ? '' : 's'} removed` : 'Items edited';
-      lines.push(`${verb} — total ${formatCentsAsCurrency(from.totalCents)} → ${formatCentsAsCurrency(to.totalCents)}`);
-    } else {
-      lines.push('Line items edited');
-    }
+    lines.push(...(from && to ? describeLineItems(from, to) : ['Line items edited']));
   }
 
-  return lines;
+  // An order.updated entry always means something changed, so a row with no lines means the diff
+  // recorded something this renderer doesn't know how to describe — say so rather than show a
+  // heading with nothing under it.
+  return lines.length > 0 ? lines : ['Order details edited'];
 }
 
 /** The one-line "what happened" for money events. Null means the label already says it. */
