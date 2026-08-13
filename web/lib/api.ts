@@ -7,6 +7,7 @@ import type {
   RecordPaymentInput,
   User,
   ApiErrorBody,
+  OrderAudit,
 } from './types';
 
 /**
@@ -80,6 +81,8 @@ export const api = {
   },
 
   getOrder: (id: string) => request<Order>(`/orders/${id}`),
+
+  getOrderAudit: (id: string) => request<OrderAudit>(`/orders/${id}/audit`),
 
   createOrder: (input: CreateOrderInput) =>
     request<Order>('/orders', { method: 'POST', body: JSON.stringify(input) }),

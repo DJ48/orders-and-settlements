@@ -71,6 +71,37 @@ export interface User {
   name?: string;
 }
 
+/**
+ * Order-scoped audit actions. Auth events (`auth.login.succeeded` and friends) also live in the
+ * same collection but carry no `orderId`, so they can never appear on an order's timeline.
+ */
+export type AuditAction =
+  | 'order.created'
+  | 'order.updated'
+  | 'order.deleted'
+  | 'payment.recorded'
+  | 'payment.rejected';
+
+/**
+ * `delta` is deliberately loose — its shape varies by action (`{ amountCents, paymentId }` for a
+ * recorded payment, `{ attemptedCents, maxAllowedCents }` for a refused one), and pretending
+ * otherwise with a union would mean re-deriving server semantics on the client.
+ */
+export interface AuditEntry {
+  _id: string;
+  action: AuditAction;
+  at: string; // ISO timestamp
+  requestId?: string;
+  /** The order's status immediately after this event, derived server-side as of that moment. */
+  status?: OrderStatus;
+  snapshot?: { totalCents?: number; amountPaidCents?: number; settlementState?: string };
+  delta?: Record<string, unknown>;
+}
+
+export interface OrderAudit {
+  entries: AuditEntry[];
+}
+
 export interface LineItemInput {
   description: string;
   quantity: number;

@@ -14,7 +14,9 @@ email:    demo@ordersandsettlements.com
 password: DemoPass123!
 ```
 Pre-seeded with five orders covering every status (pending, overdue, partially paid, paid,
-paid-late) so the dashboard, filters, and export have something real to show.
+paid-late), each carrying its own history — a due-date extension, a line item added, a refused
+over-payment, a settlement in two instalments — so the dashboard, filters, export, and
+[order timeline](#the-order-timeline) all have something real to show.
 
 ---
 
@@ -56,7 +58,7 @@ WEB_ORIGIN="http://localhost:3000"
 
 ```bash
 npm run bootstrap   # creates indexes + the collection validator — one-time, per database
-npm run seed        # optional — a demo user + one order in each status, for something to look at
+npm run seed        # optional — two demo accounts, five orders each, for something to look at
 npm run dev         # http://localhost:4000
 ```
 
@@ -64,10 +66,20 @@ npm run dev         # http://localhost:4000
 > answer SRV queries. Use the standard (non-SRV) connection string from Atlas instead — it lists
 > the shard hosts explicitly and skips the SRV lookup.
 
-`npm run seed` is safe to re-run — if the demo user (same credentials as the live demo above)
-already exists, it skips instead of erroring or duplicating orders.
+`npm run seed` creates **two** independent accounts with the same shape of data under different
+customer names — one is the demo login above, the other exists so a walkthrough recording and
+someone clicking around can't collide. Recording a payment permanently changes that order's state,
+and doing that to an account another person is reading would rewrite it underneath them.
 
-Run the tests: `npm test` (182 tests, real `mongodb-memory-server` replica sets — no mocked DB).
+It's safe to re-run: an account whose user already exists is skipped rather than duplicated. To
+rebuild, delete the users first — deliberately a manual step, since a flag that erases accounts
+isn't something a seed script should carry.
+
+Each seeded order carries a different history — a due-date extension, a line item added, a refused
+over-payment, a settlement in two instalments — so the [timeline](#the-order-timeline) on the
+detail page has something real to show.
+
+Run the tests: `npm test` (199 tests, real `mongodb-memory-server` replica sets — no mocked DB).
 
 ### 3. Web (`web/`), in a second terminal
 
@@ -99,6 +111,7 @@ Base path: `/api/v1`. Every `/orders*` route requires a session (opaque cookie, 
 | POST | `/orders` | Totals computed server-side from `lineItems`, never trusted from the client |
 | GET | `/orders/:id` | 404 for another user's order — never a distinguishable 403 |
 | PATCH | `/orders/:id` | `{ customer?, dueDate?, lineItems? }` — see [Edit locking](#edit-locking) |
+| GET | `/orders/:id/audit` | that order's recorded history — see [The order timeline](#the-order-timeline) |
 | DELETE | `/orders/:id` | Soft delete; blocked once any payment exists |
 | POST | `/orders/:id/payments` | `{ amountCents, paidOn, note?, idempotencyKey }` — the atomic guard, see [The payment guard](#the-payment-guard) |
 | GET | `/orders/export` | `?status=&from=&to=` — CSV, same filter semantics as the list endpoint |
@@ -172,6 +185,37 @@ due date. This is the deliberate exception to "status never lingers": `status` a
 needs attention right now" (nothing, once paid); `paidLate` answers "did this ever slip" (a fact
 that stays true forever once it's happened). One field can't answer both questions without either
 lying about current state or losing the history.
+
+### The order timeline
+
+Every order and payment write records an audit entry — created, edited, paid, refused, deleted —
+in a separate `auditlogs` collection rather than on the order itself. Its profile is the opposite
+of an order's on every axis: unbounded growth, append-only, never updated, queried by time rather
+than by id. Embedding it would bloat the document sitting on the hot path of every payment write.
+
+`GET /orders/:id/audit` returns that trail, newest first, served by a `{ orderId, at: -1 }` index.
+Three decisions worth naming:
+
+**Ownership is enforced by resolving the order first**, not by adding `userId` to the audit query.
+Filtering would make another user's order return an *empty* timeline, which reads as "nothing ever
+happened" rather than "not yours" — and turns the endpoint into an existence oracle for order ids.
+Resolving first gives the same 404 as every other order route.
+
+**An edit records what each field changed *from*, not just what it became**, and line items are
+compared by content rather than by count and total — renaming an item moves neither, and a row
+saying "Order updated" that can't say what changed is worse than no row at all.
+
+**Status is derived per entry, as of that entry's own timestamp**, using the same `deriveStatus`
+the order response uses; the frontend renders transitions by comparing adjacent entries and never
+decides what "overdue" means. The snapshot carries `dueDate` for exactly this reason — status
+depends on money *and* the due date, so a money-only snapshot can't say what an order's status was
+once the due date has since moved.
+
+One thing the timeline structurally cannot show: **"became overdue" is not an event.** An order
+goes overdue because a date passed, not because anyone did anything, so there is no write to
+record — a direct consequence of deriving status rather than storing it. The trail shows status at
+each recorded event, and the gap between them is real. Synthesising a row for it would mean
+inventing history, which is the one thing this surface must not do.
 
 ---
 
@@ -298,7 +342,7 @@ Roughly in priority order:
 
 ## Tests
 
-`api/test/` — 182 tests, real `mongodb-memory-server` replica sets, no mocked DB:
+`api/test/` — 199 tests, real `mongodb-memory-server` replica sets, no mocked DB:
 
 - **Pure logic:** `parseCents`/`formatCents` including the float-precision failure cases,
   `computeTotals`, `deriveStatus` across all four statuses and the overdue/paid-late precedence.
@@ -307,7 +351,12 @@ Roughly in priority order:
   idempotency replay, cross-user 404s, the status+date-range filter intersection, pagination and
   its cross-page summary aggregation, CSV export matching the same filter as the list endpoint,
   `/health` and `/ready` (including that neither requires a session), and the seed script (logs
-  in with the credentials it creates, produces one order per status, and is safe to re-run).
+  in with the credentials it creates, produces one order per status for each account, keeps the
+  two accounts separate, and is safe to re-run).
+- **Audit trail:** that another user's order 404s rather than returning an empty timeline, that no
+  entry leaks an actor's IP or user agent, that an edit records what a field changed *from*, that a
+  rename or a quantity/price swap holding the same total is still detected, and that each entry
+  reports the status as it stood then rather than as it stands today.
 
 ```bash
 cd api && npm test

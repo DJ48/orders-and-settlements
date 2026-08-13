@@ -249,6 +249,18 @@ export interface UpdateOrderInput {
   lineItems?: LineItemInput[];
 }
 
+/**
+ * The comparable shape of an order's items — `lineTotalCents` is omitted because it's derived
+ * from quantity × unitPrice, so including it would just double-count a change already visible.
+ */
+function lineItemsFor(order: OrderDocument) {
+  return order.lineItems.map((item) => ({
+    description: item.description,
+    quantity: item.quantity,
+    unitPriceCents: item.unitPriceCents,
+  }));
+}
+
 export async function updateOrder(
   userId: Types.ObjectId,
   orderId: string,
@@ -257,6 +269,16 @@ export async function updateOrder(
 ): Promise<OrderDocument> {
   const order = await getOrder(userId, orderId);
   let changed = false;
+
+  // Captured before any mutation. Recording only the incoming patch would store what a field
+  // BECAME but never what it WAS, which makes the trail unable to answer the one question an
+  // audit trail exists for: what changed. Cheap to keep — three scalars and the item count.
+  const before = {
+    customer: order.customer,
+    dueDate: order.dueDate,
+    totalCents: order.totalCents,
+    lineItems: lineItemsFor(order),
+  };
 
   // Line items lock the moment any money exists against this specific total — the lock lives
   // on the scalar (amountPaidCents), not the array, so this never needs to load `payments` and
@@ -314,12 +336,32 @@ export async function updateOrder(
     throw err;
   }
 
+  // Only fields that actually moved. A patch can name a field and set it to what it already was;
+  // recording that as a change would put a row on the timeline saying nothing happened.
+  const changes: Record<string, { from: unknown; to: unknown }> = {};
+  if (before.customer !== order.customer) {
+    changes.customer = { from: before.customer, to: order.customer };
+  }
+  if (before.dueDate.getTime() !== order.dueDate.getTime()) {
+    changes.dueDate = { from: before.dueDate.toISOString(), to: order.dueDate.toISOString() };
+  }
+  // Compared by content, not by count and total: renaming an item or swapping quantity against
+  // unit price for the same money leaves both of those identical while the order genuinely
+  // changed, which previously produced an "Order updated" row that couldn't say what moved.
+  const afterItems = lineItemsFor(order);
+  if (JSON.stringify(before.lineItems) !== JSON.stringify(afterItems)) {
+    changes.lineItems = {
+      from: { count: before.lineItems.length, totalCents: before.totalCents, items: before.lineItems },
+      to: { count: afterItems.length, totalCents: order.totalCents, items: afterItems },
+    };
+  }
+
   await recordAudit('order.updated', {
     userId,
     orderId: order._id,
     context,
     snapshot: snapshotOf(order),
-    delta: patch as Record<string, unknown>,
+    delta: { changes },
   });
 
   return order;

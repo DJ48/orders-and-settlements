@@ -1,0 +1,289 @@
+'use client';
+
+import { formatCentsAsCurrency } from '@/lib/money';
+import type { AuditEntry, AuditAction, OrderStatus } from '@/lib/types';
+
+/**
+ * The order's audit trail, newest first.
+ *
+ * Every label, amount and status here is read from the server's entry — nothing is re-derived.
+ * The point of an audit trail is that it says what actually happened, so a client that
+ * reconstructed the story from the order's current state would defeat it.
+ */
+
+const LABELS: Record<AuditAction, string> = {
+  'order.created': 'Order created',
+  'order.updated': 'Order updated',
+  'order.deleted': 'Order deleted',
+  'payment.recorded': 'Payment recorded',
+  'payment.rejected': 'Payment refused',
+};
+
+/** Refusals and deletions are the entries that aren't neutral bookkeeping, so they're coloured. */
+const DOT: Record<AuditAction, string> = {
+  'order.created': 'bg-foreground/25',
+  'order.updated': 'bg-foreground/25',
+  'order.deleted': 'bg-danger',
+  'payment.recorded': 'bg-success',
+  'payment.rejected': 'bg-danger',
+};
+
+const STATUS_LABELS: Record<OrderStatus, string> = {
+  pending: 'Pending',
+  partially_paid: 'Partially paid',
+  paid: 'Paid',
+  overdue: 'Overdue',
+};
+
+function formatTimestamp(iso: string) {
+  return new Date(iso).toLocaleString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
+function formatDay(iso: string) {
+  return new Date(iso).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+}
+
+function centsFrom(source: Record<string, unknown> | undefined, key: string): number | null {
+  const value = source?.[key];
+  return typeof value === 'number' ? value : null;
+}
+
+interface FieldChange {
+  from: unknown;
+  to: unknown;
+}
+
+function changesOf(entry: AuditEntry): Record<string, FieldChange> {
+  const raw = entry.delta?.changes;
+  return raw && typeof raw === 'object' ? (raw as Record<string, FieldChange>) : {};
+}
+
+interface LineItemShape {
+  description: string;
+  quantity: number;
+  unitPriceCents: number;
+}
+
+interface LineItemSide {
+  count: number;
+  totalCents: number;
+  items: LineItemShape[];
+}
+
+/** `{ count, totalCents, items }` on either side of a line-item edit. */
+function lineItemSide(value: unknown): LineItemSide | null {
+  if (!value || typeof value !== 'object') return null;
+  const { count, totalCents, items } = value as { count?: unknown; totalCents?: unknown; items?: unknown };
+  if (typeof count !== 'number' || typeof totalCents !== 'number') return null;
+  return { count, totalCents, items: Array.isArray(items) ? (items as LineItemShape[]) : [] };
+}
+
+function describeItem(item: LineItemShape) {
+  return `${item.description} — ${item.quantity} × ${formatCentsAsCurrency(item.unitPriceCents)}`;
+}
+
+/**
+ * Items are compared position-by-position because an edit replaces the whole array, so the
+ * subdocument ids are freshly minted and can't be used to pair old with new. Position is what
+ * survives, and it matches how the edit form presents the rows.
+ *
+ * Entries recorded before `items` was captured carry only a count and a total; those fall back to
+ * the summary line rather than claiming to know which row moved.
+ */
+function describeLineItems(from: LineItemSide, to: LineItemSide): string[] {
+  if (from.items.length === 0 && to.items.length === 0) {
+    const delta = to.count - from.count;
+    const verb =
+      delta > 0
+        ? `${delta} item${delta === 1 ? '' : 's'} added`
+        : delta < 0
+          ? `${-delta} item${delta === -1 ? '' : 's'} removed`
+          : 'Items edited';
+    return [`${verb} — total ${formatCentsAsCurrency(from.totalCents)} → ${formatCentsAsCurrency(to.totalCents)}`];
+  }
+
+  const lines: string[] = [];
+
+  for (let i = 0; i < Math.max(from.items.length, to.items.length); i++) {
+    const old = from.items[i];
+    const now = to.items[i];
+
+    if (!old && now) {
+      lines.push(`Added ${describeItem(now)}`);
+    } else if (old && !now) {
+      lines.push(`Removed ${describeItem(old)}`);
+    } else if (old && now) {
+      const name = now.description;
+      if (old.description !== now.description) lines.push(`Renamed "${old.description}" → "${now.description}"`);
+      if (old.quantity !== now.quantity) lines.push(`${name}: qty ${old.quantity} → ${now.quantity}`);
+      if (old.unitPriceCents !== now.unitPriceCents) {
+        lines.push(
+          `${name}: unit price ${formatCentsAsCurrency(old.unitPriceCents)} → ${formatCentsAsCurrency(now.unitPriceCents)}`,
+        );
+      }
+    }
+  }
+
+  if (from.totalCents !== to.totalCents) {
+    lines.push(`Order total: ${formatCentsAsCurrency(from.totalCents)} → ${formatCentsAsCurrency(to.totalCents)}`);
+  }
+
+  // Content changed in a way none of the above named — better a vague line than a silent row.
+  return lines.length > 0 ? lines : ['Line items edited'];
+}
+
+/**
+ * Best effort for pre-diff entries: the field names are known, the previous values aren't.
+ * Phrased as "set to" rather than "changed from … to …" so the row never implies it knows more
+ * than the record does.
+ */
+function describeLegacy(entry: AuditEntry): string[] {
+  const delta = entry.delta;
+  if (!delta) return [];
+
+  const lines: string[] = [];
+
+  if (typeof delta.customer === 'string') lines.push(`Customer set to ${delta.customer}`);
+  if (typeof delta.dueDate === 'string') lines.push(`Due date set to ${formatDay(delta.dueDate)}`);
+  if (Array.isArray(delta.lineItems)) {
+    const n = delta.lineItems.length;
+    lines.push(`Line items replaced — ${n} item${n === 1 ? '' : 's'}`);
+  }
+
+  return lines.length > 0 ? lines : ['Details not recorded for this edit'];
+}
+
+/**
+ * One line per field that moved. Line items are summarised as a count and a total rather than
+ * itemised: the interesting fact is that the amount owed changed and by how much, not which row
+ * was retyped — and an order's items can only change while it has no payments at all.
+ */
+function describeChanges(entry: AuditEntry): string[] {
+  // Edits are the only action carrying field changes. Payment entries describe themselves through
+  // describeMoney, and running the legacy fallback over them would stamp every one with
+  // "details not recorded" for changes they were never supposed to have.
+  if (entry.action !== 'order.updated') return [];
+
+  const changes = changesOf(entry);
+
+  // Entries written before edits recorded a before/after diff stored the raw patch instead:
+  // `{ customer, dueDate, lineItems }`, i.e. what each field became with no record of what it
+  // was. Rendering "set to X" is all that history supports — inferring the missing side from the
+  // order's current values would be a guess printed as a fact, on the one surface that must not.
+  if (Object.keys(changes).length === 0) return describeLegacy(entry);
+
+  const lines: string[] = [];
+
+  const customer = changes.customer;
+  if (customer) lines.push(`Customer: ${String(customer.from)} → ${String(customer.to)}`);
+
+  const dueDate = changes.dueDate;
+  if (dueDate) lines.push(`Due date: ${formatDay(String(dueDate.from))} → ${formatDay(String(dueDate.to))}`);
+
+  const items = changes.lineItems;
+  if (items) {
+    const from = lineItemSide(items.from);
+    const to = lineItemSide(items.to);
+    lines.push(...(from && to ? describeLineItems(from, to) : ['Line items edited']));
+  }
+
+  // An order.updated entry always means something changed, so a row with no lines means the diff
+  // recorded something this renderer doesn't know how to describe — say so rather than show a
+  // heading with nothing under it.
+  return lines.length > 0 ? lines : ['Order details edited'];
+}
+
+/** The one-line "what happened" for money events. Null means the label already says it. */
+function describeMoney(entry: AuditEntry): string | null {
+  if (entry.action === 'payment.recorded') {
+    const amount = centsFrom(entry.delta, 'amountCents');
+    return amount === null ? null : formatCentsAsCurrency(amount);
+  }
+
+  if (entry.action === 'payment.rejected') {
+    const attempted = centsFrom(entry.delta, 'attemptedCents');
+    const max = centsFrom(entry.delta, 'maxAllowedCents');
+    if (attempted === null) return null;
+    return max === null
+      ? `${formatCentsAsCurrency(attempted)} attempted`
+      : `${formatCentsAsCurrency(attempted)} attempted — ${formatCentsAsCurrency(max)} was the most allowed`;
+  }
+
+  return null;
+}
+
+export function OrderTimeline({ entries, error }: { entries: AuditEntry[] | null; error?: string | null }) {
+  if (error) {
+    return (
+      <p role="alert" className="text-sm text-danger">
+        {error}
+      </p>
+    );
+  }
+
+  if (entries === null) {
+    return <div className="h-20 animate-pulse rounded-xl bg-surface" />;
+  }
+
+  if (entries.length === 0) {
+    return <p className="text-sm text-foreground/50">Nothing recorded yet.</p>;
+  }
+
+  return (
+    <ol className="relative space-y-4 border-l border-border-subtle pl-5">
+      {entries.map((entry, i) => {
+        const money = describeMoney(entry);
+        const changes = describeChanges(entry);
+        // A running balance belongs on money events only. On a creation it's $0.00 by definition,
+        // and on an edit it's an unrelated number sitting under a customer-name change. Kept on a
+        // refusal, where "the balance did not move" is precisely the useful part.
+        const isMoneyEvent = entry.action === 'payment.recorded' || entry.action === 'payment.rejected';
+        const paid = isMoneyEvent ? entry.snapshot?.amountPaidCents : undefined;
+        // Entries are newest-first, so the older neighbour is the NEXT one in the array.
+        const previousStatus = entries[i + 1]?.status;
+        const statusMoved = entry.status && previousStatus && entry.status !== previousStatus;
+
+        return (
+          <li key={entry._id} className="relative">
+            <span
+              aria-hidden="true"
+              className={`absolute -left-[1.6rem] top-1.5 h-2 w-2 rounded-full ring-4 ring-background ${DOT[entry.action]}`}
+            />
+            <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-0.5">
+              <p className="text-sm font-medium">{LABELS[entry.action]}</p>
+              <time dateTime={entry.at} className="text-xs tabular-nums text-foreground/45">
+                {formatTimestamp(entry.at)}
+              </time>
+            </div>
+
+            {money && <p className="mt-0.5 text-sm tabular-nums text-foreground/60">{money}</p>}
+
+            {changes.map((line) => (
+              <p key={line} className="mt-0.5 text-sm text-foreground/60">
+                {line}
+              </p>
+            ))}
+
+            {statusMoved && (
+              <p className="mt-0.5 text-xs text-foreground/45">
+                Status: {STATUS_LABELS[previousStatus]} → {STATUS_LABELS[entry.status!]}
+              </p>
+            )}
+
+            {typeof paid === 'number' && (
+              <p className="mt-0.5 text-xs tabular-nums text-foreground/40">
+                Paid to date: {formatCentsAsCurrency(paid)}
+              </p>
+            )}
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
