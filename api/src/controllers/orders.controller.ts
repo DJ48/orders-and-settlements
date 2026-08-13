@@ -5,6 +5,8 @@ import { ValidationError } from '../utils/errors';
 import { ORDER_STATUSES, utcDateOnly } from '../utils/status';
 import { toOrderResponse, toOrderSummaryResponse } from './orderResponse';
 import { toOrdersCsv } from './orderCsv';
+import { toAuditEntryResponse } from './auditResponse';
+import { listOrderAudit } from '../services/audit.service';
 
 /**
  * Controllers stay thin: validate with zod, call a service, shape the response. The derived
@@ -131,6 +133,17 @@ export async function postOrder(req: Request, res: Response): Promise<void> {
 export async function getOrderById(req: Request, res: Response): Promise<void> {
   const order = await ordersService.getOrder(req.user!.id, req.params.id as string);
   res.json(toOrderResponse(order));
+}
+
+/**
+ * Resolving the order first is what enforces ownership: getOrder() throws NotFoundError for an id
+ * that doesn't exist OR belongs to someone else, so a foreign id can't be probed by watching the
+ * timeline come back empty instead of 404.
+ */
+export async function getOrderAudit(req: Request, res: Response): Promise<void> {
+  const order = await ordersService.getOrder(req.user!.id, req.params.id as string);
+  const entries = await listOrderAudit(order._id);
+  res.json({ entries: entries.map(toAuditEntryResponse) });
 }
 
 export async function patchOrder(req: Request, res: Response): Promise<void> {

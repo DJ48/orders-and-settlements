@@ -1,5 +1,5 @@
 import type { Types } from 'mongoose';
-import { AuditLog, type AuditAction } from '../models/AuditLog';
+import { AuditLog, type AuditAction, type LeanAuditLog } from '../models/AuditLog';
 import type { OrderDocument } from '../models/Order';
 import type { RequestContext } from './auth.service';
 
@@ -27,6 +27,22 @@ export async function recordAudit(
     snapshot: opts.snapshot,
     delta: opts.delta,
   });
+}
+
+/**
+ * One order's trail, newest first — served by the `{ orderId, at: -1 }` index the collection has
+ * carried since it was introduced.
+ *
+ * Ownership is NOT enforced here by adding `userId` to the filter, deliberately: that would make
+ * someone else's order return an empty timeline, which reads as "nothing ever happened" rather
+ * than "not yours". The caller resolves the order through getOrder() first, so a foreign or
+ * missing id raises the same 404 as every other order route (see Ownership in the README).
+ *
+ * Capped rather than paginated. An order's event count is bounded by how many times a human
+ * touched it, so the limit is a safety rail against a pathological document, not real pagination.
+ */
+export async function listOrderAudit(orderId: Types.ObjectId): Promise<LeanAuditLog[]> {
+  return AuditLog.find({ orderId }).sort({ at: -1 }).limit(200).lean();
 }
 
 export function snapshotOf(order: OrderDocument) {

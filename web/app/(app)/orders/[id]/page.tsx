@@ -7,7 +7,8 @@ import { api, ApiError } from '@/lib/api';
 import { formatCentsAsCurrency, parseDollarsToCents } from '@/lib/money';
 import { StatusBadge } from '@/components/StatusBadge';
 import { DatePicker } from '@/components/DatePicker';
-import type { Order } from '@/lib/types';
+import { OrderTimeline } from '@/components/OrderTimeline';
+import type { Order, AuditEntry } from '@/lib/types';
 
 function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
@@ -149,6 +150,20 @@ export default function OrderDetailPage() {
   const [showModal, setShowModal] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [audit, setAudit] = useState<AuditEntry[] | null>(null);
+  const [auditError, setAuditError] = useState<string | null>(null);
+
+  // Kept separate from `load` so a failing timeline can never take the order itself down with it.
+  // The trail is supporting detail; the order is the page.
+  const loadAudit = useCallback(async () => {
+    setAuditError(null);
+    try {
+      const { entries } = await api.getOrderAudit(id);
+      setAudit(entries);
+    } catch {
+      setAuditError('Could not load the timeline.');
+    }
+  }, [id]);
 
   const load = useCallback(async () => {
     setError(null);
@@ -171,7 +186,8 @@ export default function OrderDetailPage() {
     // flags even though it matches react.dev's own documented fetch-in-effect pattern.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     load();
-  }, [load]);
+    loadAudit();
+  }, [load, loadAudit]);
 
   async function handleDelete() {
     if (!order) return;
@@ -336,15 +352,26 @@ export default function OrderDetailPage() {
         )}
       </section>
 
+      <section className="mt-8">
+        <h2 className="mb-3 text-sm font-medium text-foreground/60">Timeline</h2>
+        <OrderTimeline entries={audit} error={auditError} />
+      </section>
+
       {showModal && (
         <PaymentModal
           order={order}
-          onClose={() => setShowModal(false)}
+          onClose={() => {
+            // A refused over-payment is recorded too, so refresh on cancel as well — otherwise
+            // the attempt only appears after a manual reload.
+            setShowModal(false);
+            loadAudit();
+          }}
           onRecorded={(updated) => {
             // Only reflect the payment once the server has confirmed it — no optimistic update
             // on money, so what's on screen always matches what's actually been recorded.
             setOrder(updated);
             setShowModal(false);
+            loadAudit();
           }}
         />
       )}

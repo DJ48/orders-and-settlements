@@ -4,6 +4,7 @@ import {
   getOrdersExport,
   postOrder,
   getOrderById,
+  getOrderAudit,
   patchOrder,
   deleteOrderById,
 } from '../controllers/orders.controller';
@@ -21,6 +22,7 @@ router.get('/', getOrders);
 router.get('/export', getOrdersExport);
 router.post('/', postOrder);
 router.get('/:id', getOrderById);
+router.get('/:id/audit', getOrderAudit);
 router.patch('/:id', patchOrder);
 router.delete('/:id', deleteOrderById);
 router.post('/:id/payments', postPayment);

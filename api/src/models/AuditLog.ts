@@ -1,4 +1,4 @@
-import { Schema, model, models, type InferSchemaType, type Model } from 'mongoose';
+import { Schema, model, models, type InferSchemaType, type Model, type Types } from 'mongoose';
 
 export const AUDIT_ACTIONS = [
   'order.created',
@@ -59,6 +59,9 @@ AuditLogSchema.index({ userId: 1, at: -1 });
 AuditLogSchema.index({ orderId: 1, at: -1 });
 
 export type AuditLogDoc = InferSchemaType<typeof AuditLogSchema>;
+
+/** What `.lean()` actually hands back: the inferred shape plus the `_id` Mongoose always adds. */
+export type LeanAuditLog = AuditLogDoc & { _id: Types.ObjectId };
 
 export const AuditLog: Model<AuditLogDoc> =
   (models.AuditLog as Model<AuditLogDoc>) ?? model<AuditLogDoc>('AuditLog', AuditLogSchema);
