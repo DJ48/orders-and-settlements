@@ -5,7 +5,7 @@ Prioritizes correctness under concurrency and a defensible data model over featu
 
 ## Deployed URL
 
-**App:** https://orders-and-settlements-rosy.vercel.app/dashboard
+**App:** https://orders-and-settlements-rosy.vercel.app
 **API:** https://orders-and-settlements-o1kh.onrender.com
 
 **Demo login:**
