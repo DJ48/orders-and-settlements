@@ -188,34 +188,20 @@ lying about current state or losing the history.
 
 ### The order timeline
 
-Every order and payment write records an audit entry — created, edited, paid, refused, deleted —
-in a separate `auditlogs` collection rather than on the order itself. Its profile is the opposite
-of an order's on every axis: unbounded growth, append-only, never updated, queried by time rather
-than by id. Embedding it would bloat the document sitting on the hot path of every payment write.
+`GET /orders/:id/audit` returns one order's recorded history — created, edited, paid, refused —
+from a separate `auditlogs` collection, newest first, served by a `{ orderId, at: -1 }` index.
 
-`GET /orders/:id/audit` returns that trail, newest first, served by a `{ orderId, at: -1 }` index.
-Three decisions worth naming:
+Ownership is enforced by **resolving the order first**, not by filtering the audit query on
+`userId`: filtering would return an *empty* timeline for someone else's order, which reads as
+"nothing happened" rather than "not yours" and turns the endpoint into an existence oracle for
+order ids. `actor.ip` is recorded but never returned — the timeline is a product surface, not a
+forensics console. Status is derived per entry as of that entry's own timestamp, so the frontend
+renders transitions without ever deciding what "overdue" means.
 
-**Ownership is enforced by resolving the order first**, not by adding `userId` to the audit query.
-Filtering would make another user's order return an *empty* timeline, which reads as "nothing ever
-happened" rather than "not yours" — and turns the endpoint into an existence oracle for order ids.
-Resolving first gives the same 404 as every other order route.
-
-**An edit records what each field changed *from*, not just what it became**, and line items are
-compared by content rather than by count and total — renaming an item moves neither, and a row
-saying "Order updated" that can't say what changed is worse than no row at all.
-
-**Status is derived per entry, as of that entry's own timestamp**, using the same `deriveStatus`
-the order response uses; the frontend renders transitions by comparing adjacent entries and never
-decides what "overdue" means. The snapshot carries `dueDate` for exactly this reason — status
-depends on money *and* the due date, so a money-only snapshot can't say what an order's status was
-once the due date has since moved.
-
-One thing the timeline structurally cannot show: **"became overdue" is not an event.** An order
-goes overdue because a date passed, not because anyone did anything, so there is no write to
-record — a direct consequence of deriving status rather than storing it. The trail shows status at
-each recorded event, and the gap between them is real. Synthesising a row for it would mean
-inventing history, which is the one thing this surface must not do.
+**"Became overdue" is not an event.** An order goes overdue because a date passed, not because
+anyone did anything, so there's no write to record — the direct consequence of deriving status
+rather than storing it. The trail shows status at each recorded event; synthesising a row for the
+gap would mean inventing history.
 
 ---
 
