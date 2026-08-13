@@ -72,12 +72,45 @@ function lineItemSide(value: unknown): { count: number; totalCents: number } | n
 }
 
 /**
+ * Best effort for pre-diff entries: the field names are known, the previous values aren't.
+ * Phrased as "set to" rather than "changed from … to …" so the row never implies it knows more
+ * than the record does.
+ */
+function describeLegacy(entry: AuditEntry): string[] {
+  const delta = entry.delta;
+  if (!delta) return [];
+
+  const lines: string[] = [];
+
+  if (typeof delta.customer === 'string') lines.push(`Customer set to ${delta.customer}`);
+  if (typeof delta.dueDate === 'string') lines.push(`Due date set to ${formatDay(delta.dueDate)}`);
+  if (Array.isArray(delta.lineItems)) {
+    const n = delta.lineItems.length;
+    lines.push(`Line items replaced — ${n} item${n === 1 ? '' : 's'}`);
+  }
+
+  return lines.length > 0 ? lines : ['Details not recorded for this edit'];
+}
+
+/**
  * One line per field that moved. Line items are summarised as a count and a total rather than
  * itemised: the interesting fact is that the amount owed changed and by how much, not which row
  * was retyped — and an order's items can only change while it has no payments at all.
  */
 function describeChanges(entry: AuditEntry): string[] {
+  // Edits are the only action carrying field changes. Payment entries describe themselves through
+  // describeMoney, and running the legacy fallback over them would stamp every one with
+  // "details not recorded" for changes they were never supposed to have.
+  if (entry.action !== 'order.updated') return [];
+
   const changes = changesOf(entry);
+
+  // Entries written before edits recorded a before/after diff stored the raw patch instead:
+  // `{ customer, dueDate, lineItems }`, i.e. what each field became with no record of what it
+  // was. Rendering "set to X" is all that history supports — inferring the missing side from the
+  // order's current values would be a guess printed as a fact, on the one surface that must not.
+  if (Object.keys(changes).length === 0) return describeLegacy(entry);
+
   const lines: string[] = [];
 
   const customer = changes.customer;
