@@ -14,7 +14,9 @@ email:    demo@ordersandsettlements.com
 password: DemoPass123!
 ```
 Pre-seeded with five orders covering every status (pending, overdue, partially paid, paid,
-paid-late) so the dashboard, filters, and export have something real to show.
+paid-late), each carrying its own history — a due-date extension, a line item added, a refused
+over-payment, a settlement in two instalments — so the dashboard, filters, export, and
+[order timeline](#the-order-timeline) all have something real to show.
 
 ---
 
@@ -56,7 +58,7 @@ WEB_ORIGIN="http://localhost:3000"
 
 ```bash
 npm run bootstrap   # creates indexes + the collection validator — one-time, per database
-npm run seed        # optional — a demo user + one order in each status, for something to look at
+npm run seed        # optional — two demo accounts, five orders each, for something to look at
 npm run dev         # http://localhost:4000
 ```
 
@@ -64,16 +66,20 @@ npm run dev         # http://localhost:4000
 > answer SRV queries. Use the standard (non-SRV) connection string from Atlas instead — it lists
 > the shard hosts explicitly and skips the SRV lookup.
 
-`npm run seed` is safe to re-run — if the demo user (same credentials as the live demo above)
-already exists, it skips instead of erroring or duplicating orders. To rebuild from scratch,
-`npm run seed -- --reset` deletes that user's orders, audit entries and sessions first. It only
-ever touches the demo account.
+`npm run seed` creates **two** independent accounts with the same shape of data under different
+customer names — one is the demo login above, the other exists so a walkthrough recording and
+someone clicking around can't collide. Recording a payment permanently changes that order's state,
+and doing that to an account another person is reading would rewrite it underneath them.
+
+It's safe to re-run: an account whose user already exists is skipped rather than duplicated. To
+rebuild, delete the users first — deliberately a manual step, since a flag that erases accounts
+isn't something a seed script should carry.
 
 Each seeded order carries a different history — a due-date extension, a line item added, a refused
 over-payment, a settlement in two instalments — so the [timeline](#the-order-timeline) on the
 detail page has something real to show.
 
-Run the tests: `npm test` (197 tests, real `mongodb-memory-server` replica sets — no mocked DB).
+Run the tests: `npm test` (199 tests, real `mongodb-memory-server` replica sets — no mocked DB).
 
 ### 3. Web (`web/`), in a second terminal
 
@@ -336,7 +342,7 @@ Roughly in priority order:
 
 ## Tests
 
-`api/test/` — 197 tests, real `mongodb-memory-server` replica sets, no mocked DB:
+`api/test/` — 199 tests, real `mongodb-memory-server` replica sets, no mocked DB:
 
 - **Pure logic:** `parseCents`/`formatCents` including the float-precision failure cases,
   `computeTotals`, `deriveStatus` across all four statuses and the overdue/paid-late precedence.
@@ -345,7 +351,8 @@ Roughly in priority order:
   idempotency replay, cross-user 404s, the status+date-range filter intersection, pagination and
   its cross-page summary aggregation, CSV export matching the same filter as the list endpoint,
   `/health` and `/ready` (including that neither requires a session), and the seed script (logs
-  in with the credentials it creates, produces one order per status, and is safe to re-run).
+  in with the credentials it creates, produces one order per status for each account, keeps the
+  two accounts separate, and is safe to re-run).
 - **Audit trail:** that another user's order 404s rather than returning an empty timeline, that no
   entry leaks an actor's IP or user agent, that an edit records what a field changed *from*, that a
   rename or a quantity/price swap holding the same total is still detected, and that each entry

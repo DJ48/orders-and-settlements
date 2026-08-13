@@ -3,7 +3,7 @@ import { MongoMemoryReplSet } from 'mongodb-memory-server';
 
 import { connectDatabase, disconnectDatabase } from '../../src/config/database';
 import { bootstrap } from '../../src/scripts/bootstrap';
-import { seed, resetDemo, DEMO_EMAIL, DEMO_PASSWORD } from '../../src/scripts/seed';
+import { seed, SEED_ACCOUNTS, DEMO_ACCOUNT, VIDEO_ACCOUNT } from '../../src/scripts/seed';
 import { User } from '../../src/models/User';
 import { Order } from '../../src/models/Order';
 import { AuditLog } from '../../src/models/AuditLog';
@@ -31,37 +31,56 @@ beforeEach(async () => {
 });
 
 describe('seed', () => {
-  it('creates a demo user that can actually log in with the documented credentials', async () => {
+  it('creates every account with credentials that actually log in', async () => {
     await seed();
 
-    const { user } = await login(DEMO_EMAIL, DEMO_PASSWORD);
-    expect(user.email).toBe(DEMO_EMAIL);
+    for (const account of SEED_ACCOUNTS) {
+      const { user } = await login(account.email, account.password);
+      expect(user.email).toBe(account.email);
+    }
   });
 
-  it('creates orders covering pending, overdue, partially paid, paid, and paid-late', async () => {
+  it.each(SEED_ACCOUNTS)(
+    'gives $email one order in each status',
+    async (account) => {
+      await seed();
+
+      const { user } = await login(account.email, account.password);
+      // listOrders returns raw stored documents (status/paidLate are response-layer derived
+      // fields, not stored) — shape them the same way the real API would before asserting.
+      const { orders: raw, total } = await listOrders(user._id, { pageSize: 100 });
+      const orders = raw.map(toOrderSummaryResponse);
+
+      expect(total).toBe(5);
+      expect(orders.filter((o) => o.status === 'pending')).toHaveLength(1);
+      expect(orders.filter((o) => o.status === 'overdue')).toHaveLength(1);
+      expect(orders.filter((o) => o.status === 'partially_paid')).toHaveLength(1);
+
+      const paidOrders = orders.filter((o) => o.status === 'paid');
+      expect(paidOrders).toHaveLength(2);
+      expect(paidOrders.some((o) => o.paidLate)).toBe(true); // settled after its due date
+      expect(paidOrders.some((o) => !o.paidLate)).toBe(true); // settled on time
+    },
+  );
+
+  it('keeps the two accounts fully separate', async () => {
     await seed();
 
-    const { user } = await login(DEMO_EMAIL, DEMO_PASSWORD);
-    // listOrders returns raw stored documents (status/paidLate are response-layer derived
-    // fields, not stored) — shape them the same way the real API would before asserting on them.
-    const { orders: raw, total } = await listOrders(user._id, { pageSize: 100 });
-    const orders = raw.map(toOrderSummaryResponse);
+    const { user: demo } = await login(DEMO_ACCOUNT.email, DEMO_ACCOUNT.password);
+    const { user: video } = await login(VIDEO_ACCOUNT.email, VIDEO_ACCOUNT.password);
+    expect(String(demo._id)).not.toBe(String(video._id));
 
-    expect(total).toBe(5);
-    expect(orders.filter((o) => o.status === 'pending')).toHaveLength(1);
-    expect(orders.filter((o) => o.status === 'overdue')).toHaveLength(1);
-    expect(orders.filter((o) => o.status === 'partially_paid')).toHaveLength(1);
+    const demoNames = await Order.find({ userId: demo._id }).distinct('customer');
+    const videoNames = await Order.find({ userId: video._id }).distinct('customer');
 
-    const paidOrders = orders.filter((o) => o.status === 'paid');
-    expect(paidOrders).toHaveLength(2);
-    expect(paidOrders.some((o) => o.paidLate)).toBe(true); // Hooli Inc — paid after its due date
-    expect(paidOrders.some((o) => !o.paidLate)).toBe(true); // Acme Manufacturing — paid on time
+    // Distinct customer names are what make it obvious which account is on screen mid-recording.
+    expect(demoNames.filter((n) => videoNames.includes(n))).toEqual([]);
   });
 
-  it('gives every order a timeline, including an edit and a refused over-payment', async () => {
+  it.each(SEED_ACCOUNTS)('gives every $email order a timeline worth reading', async (account) => {
     await seed();
 
-    const { user } = await login(DEMO_EMAIL, DEMO_PASSWORD);
+    const { user } = await login(account.email, account.password);
     const orders = await Order.find({ userId: user._id });
 
     for (const order of orders) {
@@ -78,11 +97,11 @@ describe('seed', () => {
     expect(actions).toContain('payment.rejected');
   });
 
-  it('spreads each order\'s entries over time rather than stamping them all at once', async () => {
+  it("spreads each order's entries over time rather than stamping them all at once", async () => {
     await seed();
 
-    const { user } = await login(DEMO_EMAIL, DEMO_PASSWORD);
-    const order = await Order.findOne({ userId: user._id, customer: 'Initech LLC' });
+    const { user } = await login(DEMO_ACCOUNT.email, DEMO_ACCOUNT.password);
+    const order = await Order.findOne({ userId: user._id, customer: DEMO_ACCOUNT.customers.partial });
     const entries = await AuditLog.find({ orderId: order!._id }).sort({ at: 1 });
 
     const stamps = entries.map((e) => new Date(e.at).getTime());
@@ -90,31 +109,24 @@ describe('seed', () => {
     expect(stamps[stamps.length - 1]! - stamps[0]!).toBeGreaterThan(60 * 60 * 1000); // spans > 1h
   });
 
-  it('resetDemo removes the user and everything belonging to it', async () => {
-    await seed();
-    const { user } = await login(DEMO_EMAIL, DEMO_PASSWORD);
-
-    await resetDemo();
-
-    expect(await User.countDocuments({ email: DEMO_EMAIL })).toBe(0);
-    expect(await Order.countDocuments({ userId: user._id })).toBe(0);
-    expect(await AuditLog.countDocuments({ userId: user._id })).toBe(0);
-  });
-
-  it('reset then seed rebuilds a complete demo rather than doubling it', async () => {
-    await seed();
-    await resetDemo();
+  it('records the rename on the paid-late order, not just its final name', async () => {
     await seed();
 
-    const { user } = await login(DEMO_EMAIL, DEMO_PASSWORD);
-    expect(await Order.countDocuments({ userId: user._id })).toBe(5);
+    const { user } = await login(DEMO_ACCOUNT.email, DEMO_ACCOUNT.password);
+    const order = await Order.findOne({ userId: user._id, customer: DEMO_ACCOUNT.customers.late });
+    const edit = await AuditLog.findOne({ orderId: order!._id, action: 'order.updated' });
+
+    expect((edit!.delta as { changes: { customer: { from: string; to: string } } }).changes.customer).toEqual({
+      from: DEMO_ACCOUNT.customers.lateBefore,
+      to: DEMO_ACCOUNT.customers.late,
+    });
   });
 
   it('is safe to run twice — skips instead of erroring on a duplicate email', async () => {
     await seed();
     await expect(seed()).resolves.toBeUndefined();
 
-    expect(await User.countDocuments({ email: DEMO_EMAIL })).toBe(1);
-    expect(await Order.countDocuments({})).toBe(5); // not doubled
+    expect(await User.countDocuments({})).toBe(SEED_ACCOUNTS.length);
+    expect(await Order.countDocuments({})).toBe(SEED_ACCOUNTS.length * 5); // not doubled
   });
 });
