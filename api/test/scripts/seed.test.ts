@@ -3,9 +3,10 @@ import { MongoMemoryReplSet } from 'mongodb-memory-server';
 
 import { connectDatabase, disconnectDatabase } from '../../src/config/database';
 import { bootstrap } from '../../src/scripts/bootstrap';
-import { seed, DEMO_EMAIL, DEMO_PASSWORD } from '../../src/scripts/seed';
+import { seed, resetDemo, DEMO_EMAIL, DEMO_PASSWORD } from '../../src/scripts/seed';
 import { User } from '../../src/models/User';
 import { Order } from '../../src/models/Order';
+import { AuditLog } from '../../src/models/AuditLog';
 import { login } from '../../src/services/auth.service';
 import { listOrders } from '../../src/services/orders.service';
 import { toOrderSummaryResponse } from '../../src/controllers/orderResponse';
@@ -26,6 +27,7 @@ afterAll(async () => {
 beforeEach(async () => {
   await User.deleteMany({});
   await Order.deleteMany({});
+  await AuditLog.deleteMany({});
 });
 
 describe('seed', () => {
@@ -54,6 +56,58 @@ describe('seed', () => {
     expect(paidOrders).toHaveLength(2);
     expect(paidOrders.some((o) => o.paidLate)).toBe(true); // Hooli Inc — paid after its due date
     expect(paidOrders.some((o) => !o.paidLate)).toBe(true); // Acme Manufacturing — paid on time
+  });
+
+  it('gives every order a timeline, including an edit and a refused over-payment', async () => {
+    await seed();
+
+    const { user } = await login(DEMO_EMAIL, DEMO_PASSWORD);
+    const orders = await Order.find({ userId: user._id });
+
+    for (const order of orders) {
+      const count = await AuditLog.countDocuments({ orderId: order._id });
+      expect(count, `${order.customer} has no trail`).toBeGreaterThan(1);
+    }
+
+    const actions = await AuditLog.find({ userId: user._id }).distinct('action');
+    expect(actions).toContain('order.created');
+    expect(actions).toContain('order.updated');
+    expect(actions).toContain('payment.recorded');
+    // The refusal is the one a reviewer most wants to see, and the easiest to seed away by
+    // accident — the seed swallows OverpaymentError, so nothing else would catch its absence.
+    expect(actions).toContain('payment.rejected');
+  });
+
+  it('spreads each order\'s entries over time rather than stamping them all at once', async () => {
+    await seed();
+
+    const { user } = await login(DEMO_EMAIL, DEMO_PASSWORD);
+    const order = await Order.findOne({ userId: user._id, customer: 'Initech LLC' });
+    const entries = await AuditLog.find({ orderId: order!._id }).sort({ at: 1 });
+
+    const stamps = entries.map((e) => new Date(e.at).getTime());
+    expect(new Set(stamps).size).toBe(stamps.length); // no two share a timestamp
+    expect(stamps[stamps.length - 1]! - stamps[0]!).toBeGreaterThan(60 * 60 * 1000); // spans > 1h
+  });
+
+  it('resetDemo removes the user and everything belonging to it', async () => {
+    await seed();
+    const { user } = await login(DEMO_EMAIL, DEMO_PASSWORD);
+
+    await resetDemo();
+
+    expect(await User.countDocuments({ email: DEMO_EMAIL })).toBe(0);
+    expect(await Order.countDocuments({ userId: user._id })).toBe(0);
+    expect(await AuditLog.countDocuments({ userId: user._id })).toBe(0);
+  });
+
+  it('reset then seed rebuilds a complete demo rather than doubling it', async () => {
+    await seed();
+    await resetDemo();
+    await seed();
+
+    const { user } = await login(DEMO_EMAIL, DEMO_PASSWORD);
+    expect(await Order.countDocuments({ userId: user._id })).toBe(5);
   });
 
   it('is safe to run twice — skips instead of erroring on a duplicate email', async () => {
